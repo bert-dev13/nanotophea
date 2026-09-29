@@ -1,0 +1,18 @@
+---
+description: Molecular docking is Vina import-only — never fake affinities
+globs: "**/docking/**/*,**/DockingWorkspace.tsx,**/scientificRunRepository.ts,docs/STUDY_DESIGN_CONTRACT.md"
+alwaysApply: false
+---
+
+# Molecular Docking (AutoDock Vina)
+
+NANOTOPHEA does **not** execute AutoDock Vina in Phase 5.
+
+- Researchers run Vina externally and **enter/import real results**.
+- Evidence class for genuine Vina outputs: **PREDICTED**.
+- Never generate ΔG, Ki, RMSD, confidence %, CNN scores, or energy decomposition.
+- Ligands from `compounds`; proteins from `proteins`.
+- 3D view: receptor PDB only unless real pose files are supported later.
+- No Firebase Storage for PDBQT/logs in this phase.
+
+See `docs/STUDY_DESIGN_CONTRACT.md` and `docs/PHASE5_DOCKING_SUMMARY.md`.

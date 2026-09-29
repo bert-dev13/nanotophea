@@ -1,0 +1,150 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function studyDoc(studyId) {
+      return get(/databases/$(database)/documents/studies/$(studyId));
+    }
+
+    function studyExists(studyId) {
+      return exists(/databases/$(database)/documents/studies/$(studyId));
+    }
+
+    function isStudyMember(studyId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/studies/$(studyId)/members/$(uid()));
+    }
+
+    function memberRole(studyId) {
+      return get(/databases/$(database)/documents/studies/$(studyId)/members/$(uid())).data.role;
+    }
+
+    function isOwner(studyId) {
+      return isStudyMember(studyId) && memberRole(studyId) == 'OWNER';
+    }
+
+    function isCollaborator(studyId) {
+      return isStudyMember(studyId) && memberRole(studyId) == 'COLLABORATOR';
+    }
+
+    function isStudyDocumentOwner(studyId) {
+      return signedIn()
+        && studyExists(studyId)
+        && studyDoc(studyId).data.ownerId == uid();
+    }
+
+    function canReadStudy(studyId) {
+      return isStudyMember(studyId);
+    }
+
+    // OWNER / COLLABORATOR write scientific + analysis records.
+    // Single-admin prototype uses OWNER membership for the Firebase Auth admin.
+    function canWriteResearch(studyId) {
+      return isOwner(studyId) || isCollaborator(studyId);
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && uid() == userId;
+      allow create: if signedIn() && uid() == userId;
+      allow update: if signedIn() && uid() == userId;
+      allow delete: if false;
+    }
+
+    match /studies/{studyId} {
+      // Members can read; also allow read when listed in memberIds (list/bootstrap)
+      allow read: if canReadStudy(studyId)
+        || (signedIn() && resource.data.memberIds.hasAny([uid()]));
+
+      allow create: if signedIn()
+        && request.resource.data.ownerId == uid()
+        && request.resource.data.memberIds.hasAny([uid()]);
+
+      allow update: if isOwner(studyId);
+      allow delete: if isOwner(studyId);
+
+      match /members/{memberId} {
+        // Allow reading own membership doc even when missing (returns empty)
+        // so clients can detect and repair OWNER records safely.
+        allow read: if canReadStudy(studyId)
+          || (signedIn() && memberId == uid());
+
+        // Bootstrap / repair: study document owner may create their OWN OWNER row.
+        // Do not allow arbitrary authenticated users to join arbitrary studies.
+        allow create: if signedIn()
+          && memberId == uid()
+          && request.resource.data.userId == uid()
+          && request.resource.data.role == 'OWNER'
+          && (isOwner(studyId) || isStudyDocumentOwner(studyId));
+
+        allow update, delete: if isOwner(studyId);
+      }
+
+      match /formulations/{id} {
+        allow read: if canReadStudy(studyId);
+        allow write: if canWriteResearch(studyId);
+      }
+      match /compounds/{id} {
+        allow read: if canReadStudy(studyId);
+        allow write: if canWriteResearch(studyId);
+      }
+      match /proteins/{id} {
+        allow read: if canReadStudy(studyId);
+        allow write: if canWriteResearch(studyId);
+      }
+      match /cellLines/{id} {
+        allow read: if canReadStudy(studyId);
+        allow write: if canWriteResearch(studyId);
+      }
+      match /admetRuns/{id} {
+        allow read: if canReadStudy(studyId);
+        allow write: if canWriteResearch(studyId);
+      }
+      match /dockingRuns/{id} {
+        allow read: if canReadStudy(studyId);
+        allow write: if canWriteResearch(studyId);
+      }
+      match /predictionRuns/{id} {
+        allow read: if canReadStudy(studyId);
+        allow write: if canWriteResearch(studyId);
+      }
+      match /labDatasets/{datasetId} {
+        allow read: if canReadStudy(studyId);
+        allow write: if canWriteResearch(studyId);
+        match /replicates/{replicateId} {
+          allow read: if canReadStudy(studyId);
+          allow write: if canWriteResearch(studyId);
+        }
+      }
+      match /statistics/{id} {
+        allow read: if canReadStudy(studyId);
+        allow write: if canWriteResearch(studyId);
+      }
+      match /comparisons/{id} {
+        allow read: if canReadStudy(studyId);
+        allow write: if canWriteResearch(studyId);
+      }
+      match /interpretations/{id} {
+        allow read: if canReadStudy(studyId);
+        allow write: if canWriteResearch(studyId);
+      }
+      match /references/{id} {
+        allow read: if canReadStudy(studyId);
+        allow write: if canWriteResearch(studyId);
+      }
+      match /auditLogs/{id} {
+        allow read: if canReadStudy(studyId);
+        allow create: if canWriteResearch(studyId);
+        allow update, delete: if false;
+      }
+    }
+  }
+}

@@ -1,0 +1,184 @@
+@import 'tailwindcss';
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --radius-DEFAULT: var(--radius);
+}
+
+:root {
+  --background: #f4f7fc;
+  --foreground: #0d1f3c;
+  --card: #ffffff;
+  --card-foreground: #1a3558;
+  --primary: #00a882;
+  --primary-foreground: #ffffff;
+  --secondary: #f0f5ff;
+  --secondary-foreground: #2a5070;
+  --muted: #e8eef8;
+  --muted-foreground: #546e8a;
+  --accent: #2196d3;
+  --accent-foreground: #ffffff;
+  --border: #dde5ef;
+  --ring: #00a882;
+  --radius: 8px;
+}
+
+/* ── Molecule animation keyframes ─────────────────────────────────────── */
+@keyframes mol-sway {
+  0%, 100% { transform: perspective(700px) rotateY(-28deg) rotateX(8deg); }
+  50%       { transform: perspective(700px) rotateY(28deg) rotateX(-8deg); }
+}
+@keyframes mol-spin {
+  0%   { transform: perspective(700px) rotateY(0deg); }
+  100% { transform: perspective(700px) rotateY(360deg); }
+}
+@keyframes mol-bob {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-5px); }
+}
+@keyframes orbit {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+@keyframes orbit-rev {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(-360deg); }
+}
+@keyframes chat-pop {
+  0%   { opacity: 0; transform: translateY(8px) scale(0.95); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes mascot-pulse {
+  0%, 100% { transform: scale(1); }
+  50%       { transform: scale(1.04); }
+}
+
+/* ── App chrome motion ────────────────────────────────────────────────── */
+@keyframes nano-shell-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes nano-main-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes nano-dropdown-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes nano-notice-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.nano-shell--in {
+  animation: nano-shell-in 200ms ease forwards;
+}
+
+.nano-main-in {
+  animation: nano-main-in 220ms 40ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.nano-notice {
+  animation: nano-notice-in 200ms ease both;
+}
+
+.nano-dropdown {
+  animation: nano-dropdown-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  box-shadow: 0 10px 28px -12px rgba(15, 23, 42, 0.22), 0 2px 6px rgba(15, 23, 42, 0.06);
+}
+
+.nano-menu-trigger:hover {
+  border-color: #c5d0de !important;
+}
+
+.nano-menu-trigger:focus-visible {
+  outline: 2px solid #00a88255;
+  outline-offset: 1px;
+}
+
+.nano-control {
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.nano-control:focus {
+  border-color: #00a882 !important;
+  box-shadow: 0 0 0 3px #00a88222;
+}
+
+/* Collapsible nav groups via CSS grid */
+.nano-nav-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 200ms cubic-bezier(0.22, 1, 0.36, 1), opacity 160ms ease;
+}
+.nano-nav-collapse--open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.nano-nav-collapse-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.nano-nav-item:hover {
+  background: #f1f5f9 !important;
+  color: #0d1f3c !important;
+}
+.nano-nav-item[aria-current="page"]:hover {
+  background: inherit !important;
+  color: inherit !important;
+}
+
+.nano-nav-tooltip {
+  background: #0d1f3c;
+}
+
+.nano-nav-active-bar {
+  transition: height 150ms ease, background 150ms ease;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #c8d8e8 transparent;
+}
+*::-webkit-scrollbar { width: 5px; height: 5px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #c8d8e8; border-radius: 4px; }
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), "Source Sans 3", system-ui, sans-serif;
+  font-size: 14px;
+}
+
+html, body { min-height: 100%; }
+
+@media (prefers-reduced-motion: reduce) {
+  .nano-shell--in,
+  .nano-main-in,
+  .nano-notice,
+  .nano-dropdown {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .nano-nav-collapse,
+  .nano-sidebar {
+    transition: none !important;
+  }
+}

@@ -1,0 +1,25 @@
+node_modules/
+dist/
+build/
+.next/
+out/
+.cache/
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Firebase Admin credentials — never commit
+service.json
+**/serviceAccount*.json
+GOOGLE_APPLICATION_CREDENTIALS*
+
+.vite/
+vite.config.*.timestamp-*
+*.tsbuildinfo
+*-debug.log*
+logs/
+*.log
+.claude-replay.*
+.tmp-*
+_migrate/

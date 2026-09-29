@@ -1,0 +1,21 @@
+---
+description: ADMET evidence class follows value origin, never module placement
+globs: "**/admet/**/*,**/admetEvidence.ts,**/scientificRunRepository.ts,docs/STUDY_DESIGN_CONTRACT.md"
+alwaysApply: false
+---
+
+# ADMET evidence classification
+
+Do **not** force all ADMET-related values into `PREDICTED`.
+
+Classify by actual origin:
+
+- **PREDICTED** — SwissADME-generated results, RDKit-computed descriptors, other documented computational model/tool outputs
+- **LITERATURE** — values taken from a cited scientific publication
+- **REFERENCE** — authoritative compound/database metadata where appropriate
+
+Never change the evidence class simply because the value is displayed inside the ADMET module.
+
+Preserve the original source and provenance of every value.
+
+See `docs/STUDY_DESIGN_CONTRACT.md` §6.2 / §9.5 and `lib/domain/admetEvidence.ts`.

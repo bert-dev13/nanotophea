@@ -1,0 +1,22 @@
+{
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "files.exclude": {
+    "**/_vite_legacy": true,
+    "**/next-src": true,
+    "**/_migrate": true
+  },
+  "search.exclude": {
+    "**/_vite_legacy": true,
+    "**/next-src": true,
+    "**/_migrate": true,
+    "**/node_modules": true,
+    "**/.next": true
+  },
+  "files.watcherExclude": {
+    "**/_vite_legacy/**": true,
+    "**/next-src/**": true,
+    "**/_migrate/**": true,
+    "**/.next/**": true
+  }
+}
