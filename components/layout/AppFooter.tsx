@@ -1,21 +1,18 @@
 "use client"
 
-import { BrandLogo } from "@/components/brand/BrandLogo"
-
 export function AppFooter() {
   return (
-    <footer className="border-t px-4 py-4 mt-auto" style={{ background: "#ffffff", borderColor: "#dde5ef" }}>
-      <div
-        className="max-w-7xl mx-auto flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between text-xs"
-        style={{ color: "#546e8a" }}
-      >
-        <span className="inline-flex items-center gap-2">
-          <BrandLogo size="sm" />
-          <span>NANOTOPHEA · Research platform · Not a clinical dosing tool</span>
-        </span>
-        <span className="font-mono">
-          Evidence: REFERENCE · LITERATURE · PREDICTED · EXPERIMENTAL · INTERPRETATION · SIMULATION
-        </span>
+    <footer
+      className="mt-auto border-t px-4 sm:px-6 py-3"
+      style={{ background: "#fff", borderColor: "var(--border-subtle)" }}
+    >
+      <div className="mx-auto flex max-w-7xl flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-[11px] text-[var(--muted-foreground)]">
+          NANOTOPHEA · Research platform · Not a clinical dosing tool
+        </p>
+        <p className="font-mono text-[10px] tracking-wide text-[var(--nav-section)]">
+          REFERENCE · LITERATURE · PREDICTED · EXPERIMENTAL · INTERPRETATION · SIMULATION
+        </p>
       </div>
     </footer>
   )

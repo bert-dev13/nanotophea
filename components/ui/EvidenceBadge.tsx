@@ -25,8 +25,7 @@ export function EvidenceBadge({ type, size = "sm", className = "" }: EvidenceBad
 export function EvidenceLegend() {
   const types = Object.keys(EVIDENCE_META) as EvidenceType[]
   return (
-    <div className="flex flex-wrap gap-2 items-center">
-      <span className="text-xs font-medium" style={{ color: "#546e8a" }}>Evidence:</span>
+    <div className="flex flex-wrap gap-1.5 items-center">
       {types.map((t) => (
         <EvidenceBadge key={t} type={t} />
       ))}

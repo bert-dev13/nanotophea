@@ -10,7 +10,8 @@ import {
   type KeyboardEvent,
   type SetStateAction,
 } from "react"
-import { ChevronDown, X } from "lucide-react"
+import { ChevronRight, PanelLeftClose, PanelLeftOpen, X } from "lucide-react"
+import { BrandLogo } from "@/components/brand/BrandLogo"
 import { NAV_GROUPS, type NavGroup, type NavLink } from "@/data/navigation"
 
 const SIDEBAR_EXPANDED_KEY = "nanotophea.navExpanded"
@@ -44,9 +45,15 @@ interface AppNavProps {
   collapsed: boolean
   mobileOpen: boolean
   onCloseMobile: () => void
+  onToggleCollapse: () => void
 }
 
-export function AppNav({ collapsed, mobileOpen, onCloseMobile }: AppNavProps) {
+export function AppNav({
+  collapsed,
+  mobileOpen,
+  onCloseMobile,
+  onToggleCollapse,
+}: AppNavProps) {
   const pathname = usePathname()
   const activePhaseId = useMemo(() => {
     const hit = NAV_GROUPS.find((g) => phaseMatches(g, pathname))
@@ -135,37 +142,39 @@ export function AppNav({ collapsed, mobileOpen, onCloseMobile }: AppNavProps) {
     setPredictionsOpen,
     onCloseMobile,
     mobileOpen,
+    onToggleCollapse,
+    collapsed,
   }
 
   return (
     <>
       <div
-        className={`fixed inset-0 z-40 bg-slate-900/30 transition-opacity duration-200 lg:hidden ${
+        className={`fixed inset-0 z-40 bg-[#0c1929]/35 transition-opacity duration-200 lg:hidden ${
           mobileOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
         aria-hidden={!mobileOpen}
         onClick={onCloseMobile}
       />
 
+      {/* Mobile drawer */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-[16.5rem] border-r bg-white shadow-xl transition-transform duration-200 ease-out lg:hidden ${
+        className={`nano-sidebar fixed inset-y-0 left-0 z-50 flex w-[15.75rem] flex-col border-r bg-white shadow-xl transition-transform duration-200 ease-out lg:hidden ${
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         }`}
-        style={{ borderColor: "var(--border)" }}
         aria-hidden={!mobileOpen}
         aria-label="Mobile navigation"
       >
-        <NavPanel {...panelProps} showLabels showMobileChrome />
+        <NavPanel {...panelProps} showLabels mode="mobile" />
       </aside>
 
+      {/* Desktop sidebar */}
       <aside
-        className={`nano-sidebar hidden lg:flex sticky top-14 h-[calc(100vh-3.5rem)] shrink-0 flex-col border-r bg-white transition-[width] duration-200 ease-out ${
-          collapsed ? "w-[4.25rem]" : "w-[15.5rem]"
+        className={`nano-sidebar sticky top-0 hidden h-screen shrink-0 flex-col border-r bg-white transition-[width] duration-200 ease-out lg:flex ${
+          collapsed ? "w-[3.5rem]" : "w-[14.75rem]"
         }`}
-        style={{ borderColor: "var(--border)" }}
         aria-label="Sidebar"
       >
-        <NavPanel {...panelProps} showLabels={!collapsed} showMobileChrome={false} />
+        <NavPanel {...panelProps} showLabels={!collapsed} mode="desktop" />
       </aside>
     </>
   )
@@ -180,8 +189,10 @@ function NavPanel({
   setPredictionsOpen,
   onCloseMobile,
   mobileOpen,
+  onToggleCollapse,
+  collapsed,
   showLabels,
-  showMobileChrome,
+  mode,
 }: {
   pathname: string
   activePhaseId: string
@@ -191,8 +202,10 @@ function NavPanel({
   setPredictionsOpen: Dispatch<SetStateAction<boolean>>
   onCloseMobile: () => void
   mobileOpen: boolean
+  onToggleCollapse: () => void
+  collapsed: boolean
   showLabels: boolean
-  showMobileChrome: boolean
+  mode: "desktop" | "mobile"
 }) {
   const onNavKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.key === "Escape" && mobileOpen) onCloseMobile()
@@ -200,67 +213,85 @@ function NavPanel({
 
   return (
     <div className="flex h-full flex-col">
-      {showMobileChrome ? (
-        <div
-          className="flex items-center justify-between px-3 py-2 border-b"
-          style={{ borderColor: "#eef2f7" }}
+      {/* Brand row — aligns with content top bar */}
+      <div
+        className={`flex h-12 shrink-0 items-center border-b ${
+          showLabels ? "gap-2 px-3" : "justify-center px-1.5"
+        }`}
+      >
+        <Link
+          href="/"
+          className={`group flex min-w-0 items-center gap-2 ${showLabels ? "flex-1" : ""}`}
+          onClick={mode === "mobile" ? onCloseMobile : undefined}
+          aria-label="NANOTOPHEA home"
         >
-          <span className="text-xs font-bold tracking-wide" style={{ color: "#0d1f3c" }}>
-            Navigation
-          </span>
+          <BrandLogo
+            size="sm"
+            priority={mode === "desktop"}
+            className="!h-7 !w-7 transition-opacity duration-150 group-hover:opacity-80"
+          />
+          {showLabels ? (
+            <span className="min-w-0">
+              <span className="block truncate font-[family-name:var(--font-display)] text-[0.8125rem] font-semibold leading-none tracking-[-0.02em] text-[var(--foreground)]">
+                NANOTOPHEA
+              </span>
+              <span className="mt-0.5 block truncate text-[10px] font-medium leading-none text-[var(--muted-foreground)]">
+                Research platform
+              </span>
+            </span>
+          ) : null}
+        </Link>
+
+        {mode === "mobile" ? (
           <button
             type="button"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-slate-50"
-            style={{ color: "#64748b" }}
+            className="nano-icon-btn"
             aria-label="Close navigation"
             onClick={onCloseMobile}
           >
-            <X size={16} />
+            <X size={16} strokeWidth={1.75} />
           </button>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
 
       <nav
-        className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-3 space-y-1"
+        className={`flex-1 overflow-y-auto overflow-x-hidden py-2 ${showLabels ? "px-2" : "px-1.5"}`}
         aria-label="Research modules"
         onKeyDown={onNavKeyDown}
       >
-        {NAV_GROUPS.map((group) => {
+        {NAV_GROUPS.map((group, gi) => {
           const isOpen = showLabels ? (expanded[group.id] ?? true) : true
           const groupActive = group.id === activePhaseId
 
           return (
-            <div key={group.id} className="nano-nav-group">
+            <div key={group.id} className={gi > 0 ? "mt-1.5" : ""}>
               {showLabels ? (
                 <button
                   type="button"
-                  className="nano-nav-section flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-left transition-colors duration-150 hover:bg-slate-50"
+                  className="nano-nav-section flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors duration-150 hover:bg-[var(--nav-hover)]"
                   onClick={() => toggleGroup(group.id)}
                   aria-expanded={isOpen}
                 >
                   <span
-                    className="flex-1 text-[10px] font-bold uppercase tracking-[0.08em]"
-                    style={{ color: groupActive ? "#00a882" : "#94a3b8" }}
+                    className="flex-1 text-[10px] font-semibold uppercase tracking-[0.07em]"
+                    style={{ color: groupActive ? "var(--primary)" : "var(--nav-section)" }}
                   >
                     {group.label}
                   </span>
-                  <ChevronDown
+                  <ChevronRight
                     size={12}
-                    className={`shrink-0 transition-transform duration-200 ${isOpen ? "" : "-rotate-90"}`}
-                    style={{ color: "#cbd5e1" }}
+                    className={`shrink-0 text-[var(--nav-section)] transition-transform duration-200 ${
+                      isOpen ? "rotate-90" : ""
+                    }`}
                     aria-hidden
                   />
                 </button>
-              ) : (
-                <div
-                  className="mx-auto mb-1 mt-2 h-px w-6 first:mt-0"
-                  style={{ background: "#e8eef5" }}
-                  aria-hidden
-                />
-              )}
+              ) : gi > 0 ? (
+                <div className="mx-auto my-1.5 h-px w-5 bg-[var(--border)]" aria-hidden />
+              ) : null}
 
               <div className={`nano-nav-collapse ${isOpen ? "nano-nav-collapse--open" : ""}`}>
-                <div className="nano-nav-collapse-inner space-y-0.5 pb-1">
+                <div className="nano-nav-collapse-inner space-y-px pb-0.5">
                   {group.links.map((link) => (
                     <NavItem
                       key={link.href}
@@ -275,24 +306,27 @@ function NavPanel({
                     const childOpen = !showLabels || predictionsOpen || childActive
 
                     return (
-                      <div key={child.label} className="pt-0.5">
+                      <div key={child.label} className={showLabels ? "pt-0.5" : ""}>
                         {showLabels ? (
                           <button
                             type="button"
-                            className="flex w-full items-center gap-1 rounded-md px-2.5 py-1.5 text-left transition-colors duration-150 hover:bg-slate-50"
+                            className="flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors duration-150 hover:bg-[var(--nav-hover)]"
                             onClick={() => setPredictionsOpen((v) => !v)}
                             aria-expanded={childOpen}
                           >
                             <span
-                              className="flex-1 text-[11px] font-semibold"
-                              style={{ color: childActive ? "#0369a1" : "#64748b" }}
+                              className="flex-1 pl-0.5 text-[11px] font-medium"
+                              style={{
+                                color: childActive ? "var(--accent)" : "var(--muted-foreground)",
+                              }}
                             >
                               {child.label}
                             </span>
-                            <ChevronDown
-                              size={12}
-                              className={`shrink-0 transition-transform duration-200 ${childOpen ? "" : "-rotate-90"}`}
-                              style={{ color: "#cbd5e1" }}
+                            <ChevronRight
+                              size={11}
+                              className={`shrink-0 text-[var(--nav-section)] transition-transform duration-200 ${
+                                childOpen ? "rotate-90" : ""
+                              }`}
                               aria-hidden
                             />
                           </button>
@@ -302,7 +336,9 @@ function NavPanel({
                           className={`nano-nav-collapse ${childOpen ? "nano-nav-collapse--open" : ""}`}
                         >
                           <div
-                            className={`nano-nav-collapse-inner space-y-0.5 ${showLabels ? "pl-2" : ""}`}
+                            className={`nano-nav-collapse-inner space-y-px ${
+                              showLabels ? "ml-2 border-l border-[var(--border)] pl-1.5" : ""
+                            }`}
                           >
                             {child.links.map((link) => (
                               <NavItem
@@ -324,6 +360,26 @@ function NavPanel({
           )
         })}
       </nav>
+
+      {mode === "desktop" ? (
+        <div className="shrink-0 border-t p-1.5">
+          <button
+            type="button"
+            className={`nano-icon-btn w-full ${showLabels ? "!w-full !justify-start gap-2 !px-2.5" : ""}`}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={onToggleCollapse}
+          >
+            {collapsed ? (
+              <PanelLeftOpen size={15} strokeWidth={1.75} />
+            ) : (
+              <>
+                <PanelLeftClose size={15} strokeWidth={1.75} />
+                <span className="text-[12px] font-medium">Collapse</span>
+              </>
+            )}
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -346,14 +402,11 @@ function NavItem({
   return (
     <Link
       href={link.href}
-      className={`nano-nav-item group relative flex items-center gap-2.5 rounded-md text-[12.5px] font-medium transition-[background,color] duration-150 ${
-        collapsed ? "justify-center px-2 py-2" : "px-2.5 py-1.5"
+      className={`nano-nav-item group relative flex items-center rounded text-[12.5px] transition-[background,color] duration-150 ${
+        collapsed ? "justify-center px-1.5 py-2" : "gap-2 px-2 py-1.5"
       }`}
-      style={{
-        color: active ? (nested ? "#0369a1" : "#0d1f3c") : "#546e8a",
-        background: active ? (nested ? "#e0f2fe" : "#00a88214") : "transparent",
-        fontWeight: active ? 600 : 500,
-      }}
+      data-active={active ? "true" : undefined}
+      data-nested={nested ? "true" : undefined}
       aria-current={active ? "page" : undefined}
       aria-label={collapsed ? link.label : undefined}
       onMouseEnter={(e) => {
@@ -369,25 +422,13 @@ function NavItem({
       }}
       onBlur={() => setTip(null)}
     >
-      {active && !collapsed ? (
-        <span
-          className="nano-nav-active-bar absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full"
-          style={{ background: nested ? "#0284c7" : "#00a882" }}
-          aria-hidden
-        />
-      ) : null}
-      <Icon
-        size={collapsed ? 18 : 15}
-        className="shrink-0 opacity-90"
-        style={{ color: active ? (nested ? "#0284c7" : "#00a882") : undefined }}
-        aria-hidden
-      />
+      <Icon size={collapsed ? 17 : 15} className="nano-nav-icon shrink-0" strokeWidth={1.75} aria-hidden />
       {!collapsed ? <span className="truncate">{link.label}</span> : null}
 
       {tip ? (
         <span
           role="tooltip"
-          className="nano-nav-tooltip pointer-events-none fixed z-[60] whitespace-nowrap rounded-md px-2 py-1 text-[11px] font-semibold text-white shadow-md"
+          className="nano-nav-tooltip pointer-events-none fixed z-[60] whitespace-nowrap rounded px-2 py-1 text-[11px] font-medium text-white"
           style={{ top: tip.top, left: tip.left, transform: "translateY(-50%)" }}
         >
           {link.label}

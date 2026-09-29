@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState, type ReactNode } from "react"
 import { AppHeader } from "@/components/layout/AppHeader"
 import { AppNav } from "@/components/layout/AppNav"
 import { AppFooter } from "@/components/layout/AppFooter"
-import { ScientificNotice } from "@/components/layout/ScientificNotice"
 import { AuthProvider, useAuth } from "@/components/providers/AuthProvider"
 import { StudyProvider } from "@/components/providers/StudyProvider"
 import { LoginScreen } from "@/components/auth/LoginScreen"
@@ -14,12 +13,9 @@ const SIDEBAR_COLLAPSE_KEY = "nanotophea.sidebarCollapsed"
 
 function LoadingBrand({ label }: { label: string }) {
   return (
-    <div
-      className="min-h-screen flex flex-col items-center justify-center gap-3"
-      style={{ background: "#f4f7fc" }}
-    >
+    <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-[var(--background)]">
       <BrandLogo size="lg" priority />
-      <p className="text-sm font-mono" style={{ color: "#546e8a" }}>
+      <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
         {label}
       </p>
     </div>
@@ -65,27 +61,21 @@ function AuthenticatedShell({ children }: { children: ReactNode }) {
   return (
     <StudyProvider>
       <div
-        className={`min-h-screen flex flex-col ${ready ? "nano-shell--in" : "opacity-0"}`}
-        style={{ background: "#f4f7fc" }}
+        className={`nano-shell flex min-h-screen ${ready ? "nano-shell--in" : "opacity-0"}`}
       >
-        <AppHeader
-          sidebarCollapsed={sidebarCollapsed}
-          onToggleSidebar={toggleSidebar}
-          onOpenMobileNav={() => setMobileOpen(true)}
+        <AppNav
+          collapsed={sidebarCollapsed}
+          mobileOpen={mobileOpen}
+          onCloseMobile={() => setMobileOpen(false)}
+          onToggleCollapse={toggleSidebar}
         />
-        <div className="flex flex-1 min-h-0">
-          <AppNav
-            collapsed={sidebarCollapsed}
-            mobileOpen={mobileOpen}
-            onCloseMobile={() => setMobileOpen(false)}
-          />
-          <div className="flex min-w-0 flex-1 flex-col">
-            <ScientificNotice />
-            <main className="nano-main-in flex-1 w-full mx-auto max-w-7xl px-3 sm:px-5 py-5">
-              {children}
-            </main>
-            <AppFooter />
-          </div>
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <AppHeader onOpenMobileNav={() => setMobileOpen(true)} />
+          <main className="nano-main-in flex-1 w-full mx-auto max-w-7xl px-4 sm:px-6 py-5">
+            {children}
+          </main>
+          <AppFooter />
         </div>
       </div>
     </StudyProvider>

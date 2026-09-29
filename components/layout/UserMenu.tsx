@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useId, useRef, useState } from "react"
-import { ChevronDown, LogOut, User as UserIcon } from "lucide-react"
+import { ChevronDown, LogOut } from "lucide-react"
 import { useAuth } from "@/components/providers/AuthProvider"
 import { useStudy } from "@/components/providers/StudyProvider"
 
@@ -36,38 +36,39 @@ export function UserMenu() {
       .map((p) => p[0]?.toUpperCase())
       .join("") || "U"
 
+  const isAdmin = membership?.role === "OWNER"
+
   return (
-    <div className="relative" ref={rootRef}>
+    <div className="relative shrink-0" ref={rootRef}>
       <button
         type="button"
-        className="nano-menu-trigger inline-flex items-center gap-2 rounded-lg border pl-1.5 pr-2 py-1 text-left transition-[border-color,background,box-shadow] duration-150"
-        style={{ borderColor: open ? "#00a88266" : "#dde5ef", background: "#ffffff" }}
+        className={`nano-account-trigger nano-menu-trigger inline-flex h-9 items-center gap-2 rounded-xl pl-1 pr-2 ${
+          open ? "nano-account-trigger--open" : ""
+        }`}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={menuId}
+        aria-label="Account menu"
         onClick={() => setOpen((v) => !v)}
       >
-        <span
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[11px] font-bold text-white"
-          style={{ background: "#0d1f3c" }}
-          aria-hidden
-        >
+        <span className="nano-account-avatar" aria-hidden>
           {initials}
         </span>
-        <span className="hidden sm:flex min-w-0 flex-col leading-tight">
-          <span className="text-xs font-semibold truncate max-w-[8rem]" style={{ color: "#0d1f3c" }}>
+        <span className="hidden sm:flex min-w-0 flex-col items-start leading-none">
+          <span className="max-w-[8rem] truncate text-[12px] font-semibold text-slate-900">
             {profile?.displayName || "Account"}
           </span>
-          {membership?.role === "OWNER" ? (
-            <span className="text-[10px] font-medium tracking-wide" style={{ color: "#64748b" }}>
-              Administrator
+          {isAdmin ? (
+            <span className="mt-0.5 text-[9px] font-bold uppercase tracking-[0.06em] text-teal-700">
+              Admin
             </span>
           ) : null}
         </span>
         <ChevronDown
-          size={14}
-          className={`shrink-0 transition-transform duration-150 ${open ? "rotate-180" : ""}`}
-          style={{ color: "#94a3b8" }}
+          size={13}
+          className={`hidden sm:block shrink-0 text-slate-400 transition-transform duration-150 ${
+            open ? "rotate-180 text-teal-700" : ""
+          }`}
           aria-hidden
         />
       </button>
@@ -76,38 +77,30 @@ export function UserMenu() {
         <div
           id={menuId}
           role="menu"
-          className="nano-dropdown absolute right-0 z-50 mt-1.5 w-56 origin-top-right overflow-hidden rounded-lg border shadow-lg"
-          style={{ borderColor: "#e2e8f0", background: "#ffffff" }}
+          className="nano-dropdown absolute right-0 z-50 mt-2 w-56 overflow-hidden rounded-xl border border-teal-100 bg-white"
         >
-          <div className="border-b px-3 py-2.5" style={{ borderColor: "#eef2f7" }}>
-            <p className="text-xs font-semibold truncate" style={{ color: "#0d1f3c" }}>
+          <div className="border-b border-teal-50 px-3.5 py-3">
+            <p className="truncate text-[13px] font-semibold text-slate-900">
               {profile?.displayName || "Account"}
             </p>
-            <p className="mt-0.5 text-[11px] truncate" style={{ color: "#64748b" }}>
-              {profile?.email}
-            </p>
-            {membership?.role === "OWNER" ? (
-              <p
-                className="mt-1.5 inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium"
-                style={{ borderColor: "#e2e8f0", color: "#475569", background: "#f8fafc" }}
-              >
-                <UserIcon size={10} aria-hidden />
-                Administrator
+            <p className="mt-0.5 truncate text-[11px] text-slate-500">{profile?.email}</p>
+            {isAdmin ? (
+              <p className="mt-2 inline-flex rounded-md bg-teal-50 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-teal-800">
+                ADMINISTRATOR
               </p>
             ) : null}
           </div>
           <button
             type="button"
             role="menuitem"
-            className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs font-semibold transition-colors duration-150 hover:bg-slate-50"
-            style={{ color: "#475569" }}
+            className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-[12.5px] font-medium text-slate-600 transition-colors duration-150 hover:bg-rose-50 hover:text-rose-700"
             onClick={() => {
               setOpen(false)
               void logout()
             }}
           >
-            <LogOut size={14} aria-hidden />
-            Logout
+            <LogOut size={14} strokeWidth={1.75} aria-hidden />
+            Log out
           </button>
         </div>
       ) : null}
