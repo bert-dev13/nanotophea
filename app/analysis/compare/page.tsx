@@ -1,7 +1,7 @@
 ﻿"use client"
 
-import { ComparisonWorkspace } from "@/components/analysis/ComparisonWorkspace"
+import { LegacyRedirect } from "@/components/study/LegacyRedirect"
 
 export default function Page() {
-  return <ComparisonWorkspace />
+  return <LegacyRedirect step="analysis" tab="comparison" />
 }

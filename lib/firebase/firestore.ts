@@ -29,12 +29,17 @@ export async function getDocData<T>(path: string, id: string): Promise<(T & { id
   return { id: snap.id, ...(snap.data() as T) }
 }
 
+/** Firestore rejects `undefined`. Optional Zod fields must be omitted, not stored. */
+export function omitUndefined<T extends DocumentData>(data: T): DocumentData {
+  return Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined))
+}
+
 export async function setDocData(path: string, id: string, data: DocumentData, merge = false) {
-  await setDoc(doc(getFirebaseDb(), path, id), data, { merge })
+  await setDoc(doc(getFirebaseDb(), path, id), omitUndefined(data), { merge })
 }
 
 export async function updateDocData(path: string, id: string, data: DocumentData) {
-  await updateDoc(doc(getFirebaseDb(), path, id), data)
+  await updateDoc(doc(getFirebaseDb(), path, id), omitUndefined(data))
 }
 
 export async function deleteDocData(path: string, id: string) {
@@ -56,7 +61,7 @@ export async function commitBatch(
 ): Promise<void> {
   const batch = writeBatch(getFirebaseDb())
   for (const w of writes) {
-    batch.set(doc(getFirebaseDb(), w.path, w.id), w.data, { merge: w.merge ?? false })
+    batch.set(doc(getFirebaseDb(), w.path, w.id), omitUndefined(w.data), { merge: w.merge ?? false })
   }
   await batch.commit()
 }

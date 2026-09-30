@@ -1,6 +1,7 @@
-﻿import { redirect } from "next/navigation"
+﻿"use client"
 
-/** Legacy path — Hippo–YAP lives at /insilico/predictions/yap */
+import { LegacyRedirect } from "@/components/study/LegacyRedirect"
+
 export default function Page() {
-  redirect("/insilico/predictions/yap")
+  return <LegacyRedirect step="predictions" tab="hippo-yap" />
 }

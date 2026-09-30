@@ -6,6 +6,7 @@ import { AppNav } from "@/components/layout/AppNav"
 import { AppFooter } from "@/components/layout/AppFooter"
 import { AuthProvider, useAuth } from "@/components/providers/AuthProvider"
 import { StudyProvider } from "@/components/providers/StudyProvider"
+import { WorkflowStatusProvider } from "@/components/study/WorkflowStatus"
 import { LoginScreen } from "@/components/auth/LoginScreen"
 import { BrandLogo } from "@/components/brand/BrandLogo"
 
@@ -60,6 +61,7 @@ function AuthenticatedShell({ children }: { children: ReactNode }) {
 
   return (
     <StudyProvider>
+      <WorkflowStatusProvider>
       <div
         className={`nano-shell flex min-h-screen ${ready ? "nano-shell--in" : "opacity-0"}`}
       >
@@ -78,6 +80,7 @@ function AuthenticatedShell({ children }: { children: ReactNode }) {
           <AppFooter />
         </div>
       </div>
+      </WorkflowStatusProvider>
     </StudyProvider>
   )
 }

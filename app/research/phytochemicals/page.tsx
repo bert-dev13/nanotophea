@@ -1,7 +1,7 @@
 "use client"
 
-import PhytochemicalsCatalog from "@/components/panels/research/PhytochemicalsCatalog"
+import { LegacyRedirect } from "@/components/study/LegacyRedirect"
 
 export default function Page() {
-  return <PhytochemicalsCatalog />
+  return <LegacyRedirect step="setup" tab="phytochemicals" />
 }

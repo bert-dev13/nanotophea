@@ -1,7 +1,7 @@
 "use client"
 
-import DashboardPanel from "@/components/panels/DashboardPanel"
+import { StudiesHome } from "@/components/study/StudiesHome"
 
 export default function Page() {
-  return <DashboardPanel />
+  return <StudiesHome />
 }

@@ -1,7 +1,7 @@
 "use client"
 
-import DockingWorkspace from "@/components/panels/insilico/DockingWorkspace"
+import { LegacyRedirect } from "@/components/study/LegacyRedirect"
 
 export default function Page() {
-  return <DockingWorkspace />
+  return <LegacyRedirect step="docking" />
 }

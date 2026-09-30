@@ -1,7 +1,7 @@
 "use client"
 
-import { PredictionWorkspace } from "@/components/insilico/prediction/PredictionWorkspace"
+import { LegacyRedirect } from "@/components/study/LegacyRedirect"
 
 export default function Page() {
-  return <PredictionWorkspace endpoint="hippo_yap" />
+  return <LegacyRedirect step="predictions" tab="hippo-yap" />
 }

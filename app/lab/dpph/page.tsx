@@ -1,7 +1,7 @@
 ﻿"use client"
 
-import { AssayWorkspace } from "@/components/lab/AssayWorkspace"
+import { LegacyRedirect } from "@/components/study/LegacyRedirect"
 
 export default function Page() {
-  return <AssayWorkspace assay="dpph" />
+  return <LegacyRedirect step="laboratory" tab="dpph" />
 }

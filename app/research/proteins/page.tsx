@@ -1,7 +1,7 @@
 "use client"
 
-import ProteinsCatalog from "@/components/panels/research/ProteinsCatalog"
+import { LegacyRedirect } from "@/components/study/LegacyRedirect"
 
 export default function Page() {
-  return <ProteinsCatalog />
+  return <LegacyRedirect step="setup" tab="proteins" />
 }

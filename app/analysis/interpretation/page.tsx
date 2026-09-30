@@ -1,7 +1,7 @@
 ﻿"use client"
 
-import { InterpretationWorkspace } from "@/components/analysis/InterpretationWorkspace"
+import { LegacyRedirect } from "@/components/study/LegacyRedirect"
 
 export default function Page() {
-  return <InterpretationWorkspace />
+  return <LegacyRedirect step="analysis" tab="interpretation" />
 }

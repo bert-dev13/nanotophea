@@ -1,7 +1,7 @@
 ﻿"use client"
 
-import { CharacterizationWorkspace } from "@/components/lab/CharacterizationWorkspace"
+import { LegacyRedirect } from "@/components/study/LegacyRedirect"
 
 export default function Page() {
-  return <CharacterizationWorkspace />
+  return <LegacyRedirect step="laboratory" tab="characterization" />
 }

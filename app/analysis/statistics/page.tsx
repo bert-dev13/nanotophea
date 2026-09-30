@@ -1,7 +1,7 @@
 ﻿"use client"
 
-import { StatisticsWorkspace } from "@/components/analysis/StatisticsWorkspace"
+import { LegacyRedirect } from "@/components/study/LegacyRedirect"
 
 export default function Page() {
-  return <StatisticsWorkspace />
+  return <LegacyRedirect step="analysis" tab="statistics" />
 }

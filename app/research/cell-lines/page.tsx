@@ -1,7 +1,7 @@
 "use client"
 
-import CellLinesCatalog from "@/components/panels/research/CellLinesCatalog"
+import { LegacyRedirect } from "@/components/study/LegacyRedirect"
 
 export default function Page() {
-  return <CellLinesCatalog />
+  return <LegacyRedirect step="setup" tab="cell-line" />
 }

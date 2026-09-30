@@ -1,7 +1,7 @@
 "use client"
 
-import FormulationPanel from "@/components/panels/research/FormulationPanel"
+import { LegacyRedirect } from "@/components/study/LegacyRedirect"
 
 export default function Page() {
-  return <FormulationPanel />
+  return <LegacyRedirect step="setup" tab="formulation" />
 }

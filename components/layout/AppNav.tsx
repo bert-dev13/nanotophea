@@ -2,43 +2,43 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react"
 import {
-  useEffect,
-  useMemo,
-  useState,
-  type Dispatch,
-  type KeyboardEvent,
-  type SetStateAction,
-} from "react"
-import { ChevronRight, PanelLeftClose, PanelLeftOpen, X } from "lucide-react"
+  Activity,
+  Atom,
+  BarChart3,
+  Check,
+  CircleAlert,
+  ClipboardList,
+  FlaskConical,
+  FolderOpen,
+  LogOut,
+  PanelLeftClose,
+  PanelLeftOpen,
+  ScanSearch,
+  X,
+  type LucideIcon,
+} from "lucide-react"
 import { BrandLogo } from "@/components/brand/BrandLogo"
-import { NAV_GROUPS, type NavGroup, type NavLink } from "@/data/navigation"
+import { useAuth } from "@/components/providers/AuthProvider"
+import { useStudy } from "@/components/providers/StudyProvider"
+import { useWorkflowStatus } from "@/components/study/WorkflowStatus"
+import {
+  stepIdFromPathname,
+  stepRecordStatus,
+  studyPath,
+  WORKFLOW_STEPS,
+  type StepId,
+  type StepRecordStatus,
+} from "@/lib/workflow/studyFlow"
 
-const SIDEBAR_EXPANDED_KEY = "nanotophea.navExpanded"
-const PREDICTIONS_KEY = "nanotophea.predictionsOpen"
-
-function phaseMatches(group: NavGroup, pathname: string): boolean {
-  const hrefs = [
-    ...group.links.map((l) => l.href),
-    ...(group.children?.flatMap((c) => c.links.map((l) => l.href)) ?? []),
-  ]
-  return hrefs.some((href) =>
-    href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/")
-  )
-}
-
-function isActiveHref(pathname: string, href: string) {
-  return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/")
-}
-
-function loadExpanded(): Record<string, boolean> {
-  if (typeof window === "undefined") return {}
-  try {
-    const raw = localStorage.getItem(SIDEBAR_EXPANDED_KEY)
-    return raw ? (JSON.parse(raw) as Record<string, boolean>) : {}
-  } catch {
-    return {}
-  }
+const STEP_ICONS: Record<StepId, LucideIcon> = {
+  setup: ClipboardList,
+  insilico: ScanSearch,
+  docking: Atom,
+  predictions: Activity,
+  laboratory: FlaskConical,
+  analysis: BarChart3,
 }
 
 interface AppNavProps {
@@ -48,72 +48,8 @@ interface AppNavProps {
   onToggleCollapse: () => void
 }
 
-export function AppNav({
-  collapsed,
-  mobileOpen,
-  onCloseMobile,
-  onToggleCollapse,
-}: AppNavProps) {
+export function AppNav({ collapsed, mobileOpen, onCloseMobile, onToggleCollapse }: AppNavProps) {
   const pathname = usePathname()
-  const activePhaseId = useMemo(() => {
-    const hit = NAV_GROUPS.find((g) => phaseMatches(g, pathname))
-    return hit?.id ?? "dashboard"
-  }, [pathname])
-
-  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
-    const init: Record<string, boolean> = {}
-    for (const g of NAV_GROUPS) init[g.id] = true
-    return init
-  })
-  const [predictionsOpen, setPredictionsOpen] = useState(true)
-  const [hydrated, setHydrated] = useState(false)
-
-  useEffect(() => {
-    const saved = loadExpanded()
-    const next: Record<string, boolean> = {}
-    for (const g of NAV_GROUPS) {
-      next[g.id] = saved[g.id] ?? true
-    }
-    next[activePhaseId] = true
-    setExpanded(next)
-
-    try {
-      const pred = localStorage.getItem(PREDICTIONS_KEY)
-      setPredictionsOpen(pred === null ? true : pred === "1")
-    } catch {
-      setPredictionsOpen(true)
-    }
-    setHydrated(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  useEffect(() => {
-    if (!hydrated) return
-    try {
-      localStorage.setItem(SIDEBAR_EXPANDED_KEY, JSON.stringify(expanded))
-    } catch {
-      /* ignore */
-    }
-  }, [expanded, hydrated])
-
-  useEffect(() => {
-    if (!hydrated) return
-    try {
-      localStorage.setItem(PREDICTIONS_KEY, predictionsOpen ? "1" : "0")
-    } catch {
-      /* ignore */
-    }
-  }, [predictionsOpen, hydrated])
-
-  useEffect(() => {
-    setExpanded((prev) => {
-      if (prev[activePhaseId]) return prev
-      return { ...prev, [activePhaseId]: true }
-    })
-    if (pathname.startsWith("/insilico/predictions")) {
-      setPredictionsOpen(true)
-    }
-  }, [activePhaseId, pathname])
 
   useEffect(() => {
     onCloseMobile()
@@ -129,52 +65,49 @@ export function AppNav({
     }
   }, [mobileOpen])
 
-  const toggleGroup = (id: string) => {
-    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }))
-  }
-
-  const panelProps = {
-    pathname,
-    activePhaseId,
-    expanded,
-    predictionsOpen,
-    toggleGroup,
-    setPredictionsOpen,
-    onCloseMobile,
-    mobileOpen,
-    onToggleCollapse,
-    collapsed,
-  }
-
   return (
     <>
       <div
         className={`fixed inset-0 z-40 bg-[#0c1929]/35 transition-opacity duration-200 lg:hidden ${
-          mobileOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+          mobileOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
         }`}
         aria-hidden={!mobileOpen}
         onClick={onCloseMobile}
       />
 
-      {/* Mobile drawer */}
       <aside
-        className={`nano-sidebar fixed inset-y-0 left-0 z-50 flex w-[15.75rem] flex-col border-r bg-white shadow-xl transition-transform duration-200 ease-out lg:hidden ${
+        className={`nano-sidebar fixed inset-y-0 left-0 z-50 flex w-[17.25rem] flex-col border-r bg-white shadow-xl transition-transform duration-200 ease-out lg:hidden ${
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         }`}
         aria-hidden={!mobileOpen}
         aria-label="Mobile navigation"
       >
-        <NavPanel {...panelProps} showLabels mode="mobile" />
+        <NavPanel
+          pathname={pathname}
+          showLabels
+          mode="mobile"
+          collapsed={false}
+          mobileOpen={mobileOpen}
+          onCloseMobile={onCloseMobile}
+          onToggleCollapse={onToggleCollapse}
+        />
       </aside>
 
-      {/* Desktop sidebar */}
       <aside
         className={`nano-sidebar sticky top-0 hidden h-screen shrink-0 flex-col border-r bg-white transition-[width] duration-200 ease-out lg:flex ${
-          collapsed ? "w-[3.5rem]" : "w-[14.75rem]"
+          collapsed ? "w-[3.5rem]" : "w-[17.25rem]"
         }`}
         aria-label="Sidebar"
       >
-        <NavPanel {...panelProps} showLabels={!collapsed} mode="desktop" />
+        <NavPanel
+          pathname={pathname}
+          showLabels={!collapsed}
+          mode="desktop"
+          collapsed={collapsed}
+          mobileOpen={mobileOpen}
+          onCloseMobile={onCloseMobile}
+          onToggleCollapse={onToggleCollapse}
+        />
       </aside>
     </>
   )
@@ -182,38 +115,35 @@ export function AppNav({
 
 function NavPanel({
   pathname,
-  activePhaseId,
-  expanded,
-  predictionsOpen,
-  toggleGroup,
-  setPredictionsOpen,
-  onCloseMobile,
-  mobileOpen,
-  onToggleCollapse,
-  collapsed,
   showLabels,
   mode,
+  collapsed,
+  mobileOpen,
+  onCloseMobile,
+  onToggleCollapse,
 }: {
   pathname: string
-  activePhaseId: string
-  expanded: Record<string, boolean>
-  predictionsOpen: boolean
-  toggleGroup: (id: string) => void
-  setPredictionsOpen: Dispatch<SetStateAction<boolean>>
-  onCloseMobile: () => void
-  mobileOpen: boolean
-  onToggleCollapse: () => void
-  collapsed: boolean
   showLabels: boolean
   mode: "desktop" | "mobile"
+  collapsed: boolean
+  mobileOpen: boolean
+  onCloseMobile: () => void
+  onToggleCollapse: () => void
 }) {
+  const { profile, logout } = useAuth()
+  const { activeStudy } = useStudy()
+  const { readiness } = useWorkflowStatus()
+  const studiesActive = pathname === "/"
+  const currentStepId = activeStudy ? stepIdFromPathname(pathname, activeStudy.id) : null
+
   const onNavKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.key === "Escape" && mobileOpen) onCloseMobile()
   }
 
+  const closeIfMobile = mode === "mobile" ? onCloseMobile : undefined
+
   return (
     <div className="flex h-full flex-col">
-      {/* Brand row — aligns with content top bar */}
       <div
         className={`flex h-12 shrink-0 items-center border-b ${
           showLabels ? "gap-2 px-3" : "justify-center px-1.5"
@@ -222,8 +152,8 @@ function NavPanel({
         <Link
           href="/"
           className={`group flex min-w-0 items-center gap-2 ${showLabels ? "flex-1" : ""}`}
-          onClick={mode === "mobile" ? onCloseMobile : undefined}
-          aria-label="NANOTOPHEA home"
+          onClick={closeIfMobile}
+          aria-label="NANOTOPHEA studies"
         >
           <BrandLogo
             size="sm"
@@ -231,24 +161,13 @@ function NavPanel({
             className="!h-7 !w-7 transition-opacity duration-150 group-hover:opacity-80"
           />
           {showLabels ? (
-            <span className="min-w-0">
-              <span className="block truncate font-[family-name:var(--font-display)] text-[0.8125rem] font-semibold leading-none tracking-[-0.02em] text-[var(--foreground)]">
-                NANOTOPHEA
-              </span>
-              <span className="mt-0.5 block truncate text-[10px] font-medium leading-none text-[var(--muted-foreground)]">
-                Research platform
-              </span>
+            <span className="truncate font-[family-name:var(--font-display)] text-[0.8125rem] font-semibold leading-none tracking-[-0.02em] text-[var(--foreground)]">
+              NANOTOPHEA
             </span>
           ) : null}
         </Link>
-
         {mode === "mobile" ? (
-          <button
-            type="button"
-            className="nano-icon-btn"
-            aria-label="Close navigation"
-            onClick={onCloseMobile}
-          >
+          <button type="button" className="nano-icon-btn" aria-label="Close navigation" onClick={onCloseMobile}>
             <X size={16} strokeWidth={1.75} />
           </button>
         ) : null}
@@ -256,116 +175,80 @@ function NavPanel({
 
       <nav
         className={`flex-1 overflow-y-auto overflow-x-hidden py-2 ${showLabels ? "px-2" : "px-1.5"}`}
-        aria-label="Research modules"
+        aria-label="Research workflow"
         onKeyDown={onNavKeyDown}
       >
-        {NAV_GROUPS.map((group, gi) => {
-          const isOpen = showLabels ? (expanded[group.id] ?? true) : true
-          const groupActive = group.id === activePhaseId
+        <NavLink
+          href="/"
+          label="Studies"
+          active={studiesActive}
+          collapsed={!showLabels}
+          icon={<FolderOpen size={showLabels ? 15 : 16} strokeWidth={1.75} aria-hidden />}
+          onClick={closeIfMobile}
+        />
 
-          return (
-            <div key={group.id} className={gi > 0 ? "mt-1.5" : ""}>
-              {showLabels ? (
-                <button
-                  type="button"
-                  className="nano-nav-section flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors duration-150 hover:bg-[var(--nav-hover)]"
-                  onClick={() => toggleGroup(group.id)}
-                  aria-expanded={isOpen}
-                >
-                  <span
-                    className="flex-1 text-[10px] font-semibold uppercase tracking-[0.07em]"
-                    style={{ color: groupActive ? "var(--primary)" : "var(--nav-section)" }}
-                  >
-                    {group.label}
-                  </span>
-                  <ChevronRight
-                    size={12}
-                    className={`shrink-0 text-[var(--nav-section)] transition-transform duration-200 ${
-                      isOpen ? "rotate-90" : ""
-                    }`}
-                    aria-hidden
-                  />
-                </button>
-              ) : gi > 0 ? (
-                <div className="mx-auto my-1.5 h-px w-5 bg-[var(--border)]" aria-hidden />
-              ) : null}
+        <p className={`nano-nav-kicker ${showLabels ? "" : "sr-only"}`}>Current study</p>
+        {activeStudy ? (
+          <p
+            className={`nano-study-name ${showLabels ? "" : "sr-only"}`}
+            title={activeStudy.title}
+          >
+            {activeStudy.title}
+          </p>
+        ) : showLabels ? (
+          <p className="px-2 pb-1 text-[12px] text-[var(--nav-section)]">No study open</p>
+        ) : null}
 
-              <div className={`nano-nav-collapse ${isOpen ? "nano-nav-collapse--open" : ""}`}>
-                <div className="nano-nav-collapse-inner space-y-px pb-0.5">
-                  {group.links.map((link) => (
-                    <NavItem
-                      key={link.href}
-                      link={link}
-                      pathname={pathname}
-                      collapsed={!showLabels}
-                    />
-                  ))}
-
-                  {group.children?.map((child) => {
-                    const childActive = child.links.some((l) => isActiveHref(pathname, l.href))
-                    const childOpen = !showLabels || predictionsOpen || childActive
-
-                    return (
-                      <div key={child.label} className={showLabels ? "pt-0.5" : ""}>
-                        {showLabels ? (
-                          <button
-                            type="button"
-                            className="flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors duration-150 hover:bg-[var(--nav-hover)]"
-                            onClick={() => setPredictionsOpen((v) => !v)}
-                            aria-expanded={childOpen}
-                          >
-                            <span
-                              className="flex-1 pl-0.5 text-[11px] font-medium"
-                              style={{
-                                color: childActive ? "var(--accent)" : "var(--muted-foreground)",
-                              }}
-                            >
-                              {child.label}
-                            </span>
-                            <ChevronRight
-                              size={11}
-                              className={`shrink-0 text-[var(--nav-section)] transition-transform duration-200 ${
-                                childOpen ? "rotate-90" : ""
-                              }`}
-                              aria-hidden
-                            />
-                          </button>
-                        ) : null}
-
-                        <div
-                          className={`nano-nav-collapse ${childOpen ? "nano-nav-collapse--open" : ""}`}
-                        >
-                          <div
-                            className={`nano-nav-collapse-inner space-y-px ${
-                              showLabels ? "ml-2 border-l border-[var(--border)] pl-1.5" : ""
-                            }`}
-                          >
-                            {child.links.map((link) => (
-                              <NavItem
-                                key={link.href}
-                                link={link}
-                                pathname={pathname}
-                                collapsed={!showLabels}
-                                nested
-                              />
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            </div>
-          )
-        })}
+        <p className={`nano-nav-kicker ${showLabels ? "mt-2" : "sr-only"}`}>Research workflow</p>
+        <ol className="space-y-0.5">
+          {WORKFLOW_STEPS.map((step) => {
+            const status = stepRecordStatus(step.id, activeStudy ? readiness : null)
+            const current = currentStepId === step.id
+            const Icon = STEP_ICONS[step.id]
+            const href = activeStudy ? studyPath(activeStudy.id, step.id) : null
+            return (
+              <li key={step.id}>
+                <StepLink
+                  href={href}
+                  number={step.number}
+                  label={step.label}
+                  current={current}
+                  status={status}
+                  collapsed={!showLabels}
+                  icon={<Icon size={15} strokeWidth={1.75} aria-hidden />}
+                  onClick={closeIfMobile}
+                />
+              </li>
+            )
+          })}
+        </ol>
       </nav>
 
-      {mode === "desktop" ? (
-        <div className="shrink-0 border-t p-1.5">
+      <div className={`shrink-0 border-t ${showLabels ? "p-2.5" : "p-1.5"}`}>
+        {showLabels ? (
+          <div className="mb-2 px-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.07em] text-[var(--nav-section)]">
+              Account
+            </p>
+            <p className="mt-1 truncate text-[12.5px] font-semibold text-[var(--foreground)]">
+              {profile?.displayName || "Account"}
+            </p>
+            <p className="truncate text-[11px] text-[var(--muted-foreground)]">{profile?.email}</p>
+          </div>
+        ) : null}
+        <button
+          type="button"
+          className={`nano-icon-btn ${showLabels ? "!h-8 !w-full !justify-start gap-2 !px-2" : "w-full"}`}
+          aria-label="Log out"
+          onClick={() => void logout()}
+        >
+          <LogOut size={15} strokeWidth={1.75} />
+          {showLabels ? <span className="text-[12.5px] font-medium">Log out</span> : null}
+        </button>
+        {mode === "desktop" ? (
           <button
             type="button"
-            className={`nano-icon-btn w-full ${showLabels ? "!w-full !justify-start gap-2 !px-2.5" : ""}`}
+            className={`nano-icon-btn mt-1 w-full ${showLabels ? "!h-8 !justify-start gap-2 !px-2" : ""}`}
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             onClick={onToggleCollapse}
           >
@@ -378,60 +261,155 @@ function NavPanel({
               </>
             )}
           </button>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
     </div>
   )
 }
 
-function NavItem({
-  link,
-  pathname,
+function statusNote(status: StepRecordStatus): string | null {
+  if (status === "complete") return "Completed"
+  if (status === "review") return "Review required"
+  return null
+}
+
+function StepLink({
+  href,
+  number,
+  label,
+  current,
+  status,
   collapsed,
-  nested = false,
+  icon,
+  onClick,
 }: {
-  link: NavLink
-  pathname: string
+  href: string | null
+  number: string
+  label: string
+  current: boolean
+  status: StepRecordStatus
   collapsed: boolean
-  nested?: boolean
+  icon: ReactNode
+  onClick?: () => void
 }) {
-  const Icon = link.icon
-  const active = isActiveHref(pathname, link.href)
-  const [tip, setTip] = useState<{ top: number; left: number } | null>(null)
+  const note = statusNote(status)
+  const tipLabel = note ? `${number} ${label} · ${note}` : `${number} ${label}`
+  const className = `nano-flow-nav ${collapsed ? "nano-flow-nav--collapsed" : ""}`
+
+  const body = (
+    <>
+      <span className="nano-flow-num">{number}</span>
+      <span className="nano-nav-icon shrink-0">{icon}</span>
+      {collapsed ? null : <span className="min-w-0 flex-1 truncate">{label}</span>}
+      {status === "complete" ? (
+        <Check size={13} strokeWidth={2.5} className="nano-flow-check shrink-0" aria-hidden />
+      ) : null}
+      {status === "review" ? (
+        <CircleAlert size={13} strokeWidth={2.25} className="nano-flow-review shrink-0" aria-hidden />
+      ) : null}
+      {collapsed && status === "complete" ? <span className="sr-only">Completed</span> : null}
+      {status === "review" ? <span className="sr-only">Review required</span> : null}
+    </>
+  )
+
+  if (!href) {
+    return (
+      <span className={`${className} nano-flow-nav--idle`} title="Open a study first">
+        {body}
+        <CollapsedTip collapsed={collapsed} label={tipLabel} />
+      </span>
+    )
+  }
 
   return (
     <Link
-      href={link.href}
-      className={`nano-nav-item group relative flex items-center rounded text-[12.5px] transition-[background,color] duration-150 ${
-        collapsed ? "justify-center px-1.5 py-2" : "gap-2 px-2 py-1.5"
-      }`}
-      data-active={active ? "true" : undefined}
-      data-nested={nested ? "true" : undefined}
-      aria-current={active ? "page" : undefined}
-      aria-label={collapsed ? link.label : undefined}
+      href={href}
+      className={className}
+      data-current={current ? "true" : undefined}
+      data-status={status}
+      aria-current={current ? "step" : undefined}
+      aria-label={collapsed ? tipLabel : undefined}
+      title={collapsed ? undefined : note || undefined}
+      onClick={onClick}
+    >
+      {body}
+      <CollapsedTip collapsed={collapsed} label={tipLabel} />
+    </Link>
+  )
+}
+
+function CollapsedTip({ collapsed, label }: { collapsed: boolean; label: string }) {
+  const [tip, setTip] = useState<{ top: number; left: number } | null>(null)
+  if (!collapsed) return null
+  return (
+    <span
+      className="absolute inset-0"
       onMouseEnter={(e) => {
-        if (!collapsed) return
         const r = e.currentTarget.getBoundingClientRect()
         setTip({ top: r.top + r.height / 2, left: r.right + 8 })
       }}
       onMouseLeave={() => setTip(null)}
       onFocus={(e) => {
-        if (!collapsed) return
         const r = e.currentTarget.getBoundingClientRect()
         setTip({ top: r.top + r.height / 2, left: r.right + 8 })
       }}
       onBlur={() => setTip(null)}
     >
-      <Icon size={collapsed ? 17 : 15} className="nano-nav-icon shrink-0" strokeWidth={1.75} aria-hidden />
-      {!collapsed ? <span className="truncate">{link.label}</span> : null}
-
       {tip ? (
         <span
           role="tooltip"
           className="nano-nav-tooltip pointer-events-none fixed z-[60] whitespace-nowrap rounded px-2 py-1 text-[11px] font-medium text-white"
           style={{ top: tip.top, left: tip.left, transform: "translateY(-50%)" }}
         >
-          {link.label}
+          {label}
+        </span>
+      ) : null}
+    </span>
+  )
+}
+
+function NavLink({
+  href,
+  label,
+  active,
+  collapsed,
+  icon,
+  onClick,
+}: {
+  href: string
+  label: string
+  active: boolean
+  collapsed: boolean
+  icon: ReactNode
+  onClick?: () => void
+}) {
+  const [tip, setTip] = useState<{ top: number; left: number } | null>(null)
+
+  return (
+    <Link
+      href={href}
+      className={`nano-nav-item relative flex items-center rounded text-[12.5px] transition-[background,color] duration-150 ${
+        collapsed ? "justify-center px-1.5 py-2" : "gap-2 px-2 py-1.5"
+      }`}
+      data-active={active ? "true" : undefined}
+      aria-current={active ? "page" : undefined}
+      onClick={onClick}
+      onMouseEnter={(e) => {
+        if (!collapsed) return
+        const r = e.currentTarget.getBoundingClientRect()
+        setTip({ top: r.top + r.height / 2, left: r.right + 8 })
+      }}
+      onMouseLeave={() => setTip(null)}
+    >
+      <span className="nano-nav-icon shrink-0">{icon}</span>
+      {collapsed ? null : <span className="truncate">{label}</span>}
+      {tip ? (
+        <span
+          role="tooltip"
+          className="nano-nav-tooltip pointer-events-none fixed z-[60] whitespace-nowrap rounded px-2 py-1 text-[11px] font-medium text-white"
+          style={{ top: tip.top, left: tip.left, transform: "translateY(-50%)" }}
+        >
+          {label}
         </span>
       ) : null}
     </Link>

@@ -1,7 +1,7 @@
 "use client"
 
-import ReferencesCatalog from "@/components/panels/research/ReferencesCatalog"
+import { LegacyRedirect } from "@/components/study/LegacyRedirect"
 
 export default function Page() {
-  return <ReferencesCatalog />
+  return <LegacyRedirect step="setup" tab="references" />
 }
