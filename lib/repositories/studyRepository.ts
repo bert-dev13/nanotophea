@@ -47,8 +47,8 @@ export async function createStudy(owner: UserProfile, input: CreateStudyInput): 
     shortTitle: parsed.shortTitle,
     description: parsed.description,
     status: "draft",
-    primaryCellLine: "HepG2",
-    formulationSummary: "2 g dried Phyllanthus niruri leaf + 1 g Chitosan–TPP per tea bag",
+    primaryCellLine: "",
+    formulationSummary: "",
     fairYear: parsed.fairYear,
     researcherNames: parsed.researcherNames,
     adviserNames: parsed.adviserNames,
@@ -70,7 +70,6 @@ export async function createStudy(owner: UserProfile, input: CreateStudyInput): 
     },
   ])
 
-  // Membership exists → audit + research seed writes are authorized
   await writeAuditLog({
     studyId: study.id,
     actorId: owner.id,
@@ -78,9 +77,6 @@ export async function createStudy(owner: UserProfile, input: CreateStudyInput): 
     entityType: "study",
     entityId: study.id,
   })
-
-  const { seedDefaultResearchData } = await import("@/lib/seed/defaultResearchData")
-  await seedDefaultResearchData(study.id, owner)
 
   return study
 }

@@ -735,8 +735,7 @@ export function InterpretationWorkspace() {
                 type="button"
                 disabled={busy}
                 onClick={() => void onSave()}
-                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
-                style={{ background: "#00a882" }}
+                className="nano-setup-save"
               >
                 <Save size={13} />
                 {selectedId ? "Save changes" : "Create interpretation"}

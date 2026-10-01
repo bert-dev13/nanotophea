@@ -1,8 +1,16 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useId, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
-import { Plus } from "lucide-react"
+import {
+  Beaker,
+  CalendarRange,
+  FlaskConical,
+  FolderKanban,
+  Microscope,
+  MoreHorizontal,
+  Plus,
+} from "lucide-react"
 import { useStudy } from "@/components/providers/StudyProvider"
 import type { Study, StudyStatus } from "@/lib/domain/models"
 import { readWorkflowProgress, studyPath, WORKFLOW_STEPS } from "@/lib/workflow/studyFlow"
@@ -21,20 +29,12 @@ function formatUpdated(iso: string) {
     month: "short",
     day: "numeric",
     year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
   }).format(d)
-}
-
-function studyMeta(study: Study) {
-  return [study.primaryCellLine, study.shortTitle, study.fairYear ? `FAIR ${study.fairYear}` : null]
-    .filter(Boolean)
-    .join(" · ")
 }
 
 export function StudiesHome() {
   const router = useRouter()
-  const { studies, loading, error, selectStudy, createNewStudy } = useStudy()
+  const { studies, activeStudy, loading, error, selectStudy, createNewStudy } = useStudy()
   const [creating, setCreating] = useState(false)
   const [title, setTitle] = useState("")
   const [shortTitle, setShortTitle] = useState("")
@@ -43,8 +43,38 @@ export function StudiesHome() {
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [openingId, setOpeningId] = useState<string | null>(null)
+  const [menuId, setMenuId] = useState<string | null>(null)
+  const [progressReady, setProgressReady] = useState(false)
+  const titleId = useId()
+
+  useEffect(() => {
+    setProgressReady(true)
+  }, [])
+
+  useEffect(() => {
+    if (!menuId) return
+    const close = () => setMenuId(null)
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuId(null)
+    }
+    window.addEventListener("keydown", onKey)
+    window.addEventListener("scroll", close, true)
+    return () => {
+      window.removeEventListener("keydown", onKey)
+      window.removeEventListener("scroll", close, true)
+    }
+  }, [menuId])
+
+  const counts = {
+    total: studies.length,
+    active: studies.filter((study) => study.status === "active").length,
+    draft: studies.filter((study) => study.status === "draft").length,
+    analysis: studies.filter((study) => study.status === "analysis").length,
+    archived: studies.filter((study) => study.status === "archived").length,
+  }
 
   const openStudy = async (studyId: string) => {
+    setMenuId(null)
     setOpeningId(studyId)
     setFormError(null)
     try {
@@ -81,94 +111,119 @@ export function StudiesHome() {
 
   return (
     <div className="nano-studies">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="font-[family-name:var(--font-display)] text-[1.65rem] font-semibold tracking-[-0.03em] text-[var(--foreground)]">
-            Studies
-          </h1>
-          <p className="mt-1 max-w-xl text-[13px] leading-relaxed text-[var(--muted-foreground)]">
-            Open a study and follow the workspace from Research Setup through Analysis.
-          </p>
+      <header className="nano-studies-head">
+        <div className="nano-studies-head-main">
+          <span className="nano-studies-mark" aria-hidden>
+            <FolderKanban size={18} strokeWidth={1.75} />
+          </span>
+          <div className="min-w-0">
+            <h1 id={titleId} className="nano-studies-title">
+              Studies
+            </h1>
+            <p className="nano-studies-lead">
+              Open a study and follow it from Research Setup through Analysis.
+            </p>
+          </div>
         </div>
         <button
           type="button"
-          className="nano-flow-next"
+          className="nano-studies-new"
+          aria-expanded={creating}
           onClick={() => {
-            setCreating((v) => !v)
+            setCreating((open) => !open)
             setFormError(null)
           }}
         >
-          <Plus size={15} strokeWidth={2.25} aria-hidden />
+          <Plus size={16} strokeWidth={2.25} aria-hidden />
           New Study
         </button>
-      </div>
+        <ul className="nano-studies-stats" aria-label="Study counts">
+          <li>
+            <span>{loading ? "—" : counts.total}</span>
+            Total
+          </li>
+          <li>
+            <span>{loading ? "—" : counts.active}</span>
+            Active
+          </li>
+          <li>
+            <span>{loading ? "—" : counts.draft}</span>
+            Draft
+          </li>
+          {counts.analysis > 0 ? (
+            <li>
+              <span>{counts.analysis}</span>
+              Analysis
+            </li>
+          ) : null}
+          {counts.archived > 0 ? (
+            <li>
+              <span>{counts.archived}</span>
+              Archived
+            </li>
+          ) : null}
+        </ul>
+      </header>
 
-      <p className="mt-4 text-[12px] leading-snug text-[var(--muted-foreground)]">
-        Computational outputs do not constitute experimental proof.
-      </p>
+      <p className="nano-studies-disclaimer">Computational outputs do not constitute experimental proof.</p>
 
       {creating ? (
         <form
-          className="nano-step-in mt-5 grid gap-3 border-t pt-4 sm:grid-cols-2"
-          onSubmit={(e) => {
-            e.preventDefault()
+          className="nano-studies-form nano-step-in"
+          onSubmit={(event) => {
+            event.preventDefault()
             void onCreate()
           }}
         >
-          <label className="block sm:col-span-2">
-            <span className="text-[12px] font-semibold">Study title</span>
+          <div>
+            <h2 className="nano-studies-form-title">New study</h2>
+            <p className="nano-studies-form-copy">It opens on Research Setup after it is created.</p>
+          </div>
+          <label className="nano-studies-field nano-studies-field--wide">
+            <span>Study title</span>
             <input
-              className="nano-control mt-1 w-full rounded-md border bg-white px-3 py-2 text-[14px]"
-              style={{ borderColor: "var(--border)" }}
+              className="nano-control"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(event) => setTitle(event.target.value)}
               placeholder="NanoHepatoTea SIP 2026"
               autoFocus
               required
               minLength={3}
             />
           </label>
-          <label className="block">
-            <span className="text-[12px] font-semibold">Short title</span>
+          <label className="nano-studies-field">
+            <span>Short title</span>
             <input
-              className="nano-control mt-1 w-full rounded-md border bg-white px-3 py-2 text-[14px]"
-              style={{ borderColor: "var(--border)" }}
+              className="nano-control"
               value={shortTitle}
-              onChange={(e) => setShortTitle(e.target.value)}
+              onChange={(event) => setShortTitle(event.target.value)}
               placeholder="NanoHepatoTea"
             />
           </label>
-          <label className="block">
-            <span className="text-[12px] font-semibold">FAIR year</span>
+          <label className="nano-studies-field">
+            <span>FAIR year</span>
             <input
-              className="nano-control mt-1 w-full rounded-md border bg-white px-3 py-2 text-[14px]"
-              style={{ borderColor: "var(--border)" }}
+              className="nano-control"
               value={fairYear}
-              onChange={(e) => setFairYear(e.target.value)}
+              onChange={(event) => setFairYear(event.target.value)}
               placeholder="2026"
             />
           </label>
-          <label className="block sm:col-span-2">
-            <span className="text-[12px] font-semibold">Description</span>
+          <label className="nano-studies-field nano-studies-field--wide">
+            <span>Description</span>
             <textarea
-              className="nano-control mt-1 w-full rounded-md border bg-white px-3 py-2 text-[14px]"
-              style={{ borderColor: "var(--border)" }}
+              className="nano-control"
               rows={2}
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(event) => setDescription(event.target.value)}
               placeholder="In silico and experimental assessment against HepG2."
             />
           </label>
-          <div className="flex flex-wrap gap-2 sm:col-span-2">
-            <button type="submit" className="nano-flow-next" disabled={busy}>
-              {busy ? "Creating…" : "Create and open Step 1"}
+          <div className="nano-studies-form-actions">
+            <button type="submit" className="nano-studies-new" disabled={busy}>
+              {busy ? "Creating…" : "Create and open"}
             </button>
-            <button
-              type="button"
-              className="nano-flow-prev"
-              disabled={busy}
-              onClick={() => setCreating(false)}
-            >
+            <button type="button" className="nano-studies-cancel" disabled={busy} onClick={() => setCreating(false)}>
               Cancel
             </button>
           </div>
@@ -176,65 +231,170 @@ export function StudiesHome() {
       ) : null}
 
       {error ? (
-        <p className="mt-4 text-[13px]" style={{ color: "#b91c1c" }} role="alert">
+        <p className="nano-studies-alert" role="alert">
           {error}
         </p>
       ) : null}
       {formError ? (
-        <p className="mt-4 text-[13px]" style={{ color: "#b91c1c" }} role="alert">
+        <p className="nano-studies-alert" role="alert">
           {formError}
         </p>
       ) : null}
 
-      <div className="mt-4 border-t" style={{ borderColor: "var(--border)" }}>
-        {loading ? (
-          <p className="py-8 text-[13px] text-[var(--muted-foreground)]">Loading studies…</p>
-        ) : studies.length === 0 ? (
-          <p className="py-8 text-[13px] text-[var(--muted-foreground)]">
-            No studies yet. Create one to start at Research Setup.
-          </p>
-        ) : (
-          <ul>
-            {studies.map((study) => (
-              <li
-                key={study.id}
-                className="flex flex-col gap-3 border-b py-4 sm:flex-row sm:items-center"
-                style={{ borderColor: "var(--border-subtle)" }}
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="truncate text-[15px] font-semibold text-[var(--foreground)]">
-                      {study.title}
-                    </h2>
-                    <span className="nano-study-status" data-status={study.status}>
-                      {STATUS_LABEL[study.status]}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-[12px] text-[var(--muted-foreground)]">
-                    Updated {formatUpdated(study.updatedAt)}
-                  </p>
-                  <p className="mt-0.5 truncate text-[12px] text-[var(--muted-foreground)]">
-                    {studyMeta(study)}
-                  </p>
-                  {study.formulationSummary ? (
-                    <p className="mt-0.5 truncate text-[12px] text-[var(--muted-foreground)]">
-                      {study.formulationSummary}
-                    </p>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  className="nano-flow-next shrink-0"
-                  disabled={openingId === study.id}
-                  onClick={() => void openStudy(study.id)}
-                >
-                  {openingId === study.id ? "Opening…" : "Open Study"}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      {loading ? (
+        <p className="nano-studies-empty">Loading studies…</p>
+      ) : studies.length === 0 ? (
+        <div className="nano-studies-empty">
+          <p>No studies yet. Create one to start at Research Setup.</p>
+        </div>
+      ) : (
+        <ul className="nano-studies-list" aria-labelledby={titleId}>
+          {studies.map((study, index) => (
+            <StudyCard
+              key={study.id}
+              study={study}
+              index={index}
+              current={activeStudy?.id === study.id}
+              progressReady={progressReady}
+              opening={openingId === study.id}
+              menuOpen={menuId === study.id}
+              onToggleMenu={() => setMenuId((id) => (id === study.id ? null : study.id))}
+              onCloseMenu={() => setMenuId(null)}
+              onOpen={() => void openStudy(study.id)}
+            />
+          ))}
+        </ul>
+      )}
     </div>
+  )
+}
+
+function StudyCard({
+  study,
+  index,
+  current,
+  progressReady,
+  opening,
+  menuOpen,
+  onToggleMenu,
+  onCloseMenu,
+  onOpen,
+}: {
+  study: Study
+  index: number
+  current: boolean
+  progressReady: boolean
+  opening: boolean
+  menuOpen: boolean
+  onToggleMenu: () => void
+  onCloseMenu: () => void
+  onOpen: () => void
+}) {
+  const menuRef = useRef<HTMLDivElement>(null)
+  const stepIndex = progressReady ? readWorkflowProgress(study.id) : 0
+  const step = WORKFLOW_STEPS[stepIndex] ?? WORKFLOW_STEPS[0]
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const onPointer = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) onCloseMenu()
+    }
+    window.addEventListener("mousedown", onPointer)
+    return () => window.removeEventListener("mousedown", onPointer)
+  }, [menuOpen, onCloseMenu])
+
+  return (
+    <li
+      className="nano-project-card"
+      data-current={current ? "true" : undefined}
+      data-status={study.status}
+      style={{ animationDelay: `${40 + index * 55}ms` }}
+    >
+      <div className="nano-project-card-top">
+        <div className="min-w-0">
+          <div className="nano-project-card-title-row">
+            <h2 className="nano-project-card-title">{study.title}</h2>
+            <span className="nano-study-status" data-status={study.status}>
+              {STATUS_LABEL[study.status]}
+            </span>
+            {current ? <span className="nano-study-current">Current</span> : null}
+          </div>
+          {study.description ? <p className="nano-project-card-desc">{study.description}</p> : null}
+        </div>
+        <div className="nano-study-menu" ref={menuRef}>
+          <button
+            type="button"
+            className="nano-study-menu-btn"
+            aria-label={`Actions for ${study.title}`}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={onToggleMenu}
+          >
+            <MoreHorizontal size={16} strokeWidth={1.75} />
+          </button>
+          {menuOpen ? (
+            <div className="nano-study-menu-pop" role="menu">
+              <button type="button" role="menuitem" onClick={onOpen} disabled={opening}>
+                {opening ? "Opening…" : "Open study"}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <ul className="nano-study-meta">
+        <li>
+          <CalendarRange size={13} strokeWidth={1.75} aria-hidden />
+          <span>Updated {formatUpdated(study.updatedAt)}</span>
+        </li>
+        {study.primaryCellLine ? (
+          <li>
+            <Microscope size={13} strokeWidth={1.75} aria-hidden />
+            <span>{study.primaryCellLine}</span>
+          </li>
+        ) : null}
+        {study.shortTitle ? (
+          <li>
+            <FlaskConical size={13} strokeWidth={1.75} aria-hidden />
+            <span>{study.shortTitle}</span>
+          </li>
+        ) : null}
+        {study.fairYear ? (
+          <li>
+            <FolderKanban size={13} strokeWidth={1.75} aria-hidden />
+            <span>FAIR {study.fairYear}</span>
+          </li>
+        ) : null}
+        {study.formulationSummary ? (
+          <li className="nano-study-meta-wide">
+            <Beaker size={13} strokeWidth={1.75} aria-hidden />
+            <span>{study.formulationSummary}</span>
+          </li>
+        ) : null}
+      </ul>
+
+      <div className="nano-study-progress">
+        <p className="nano-study-stage">
+          Current stage <strong>{step.label}</strong>
+        </p>
+        <ol className="nano-study-rail" aria-label={`${study.title} research progress`}>
+          {WORKFLOW_STEPS.map((item, itemIndex) => {
+            const mark = itemIndex < stepIndex ? "done" : itemIndex === stepIndex ? "current" : "upcoming"
+            return (
+              <li key={item.id} data-mark={mark} title={item.label}>
+                <span className="nano-study-rail-track" />
+                <span className="nano-study-rail-name">{item.shortLabel}</span>
+              </li>
+            )
+          })}
+        </ol>
+      </div>
+
+      <div className="nano-project-card-actions">
+        <button type="button" className="nano-studies-open" disabled={opening} onClick={onOpen}>
+          {opening ? "Opening…" : "Open Study"}
+        </button>
+      </div>
+    </li>
   )
 }

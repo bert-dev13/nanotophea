@@ -695,8 +695,7 @@ export function ComparisonWorkspace() {
                     type="button"
                     disabled={busy || !preview.canPersist}
                     onClick={() => void onSave()}
-                    className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50"
-                    style={{ background: "#00a882" }}
+                    className="nano-setup-save"
                   >
                     <Save size={13} />
                     Save comparison

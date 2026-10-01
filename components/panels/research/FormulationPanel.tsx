@@ -45,7 +45,6 @@ import {
   listFormulations,
   updateFormulation,
 } from "@/lib/repositories/researchDataRepository"
-import { seedDefaultResearchData } from "@/lib/seed/defaultResearchData"
 import { toUserFacingError } from "@/lib/errors/userFacing"
 
 type Mode = "view" | "create" | "edit"
@@ -126,7 +125,6 @@ export default function FormulationPanel() {
     setLoading(true)
     setError(null)
     try {
-      await seedDefaultResearchData(activeStudy.id, profile)
       const list = await listFormulations(activeStudy.id)
       setRows(list)
       setSelectedId((prev) => prev ?? list.find((f) => f.isCanonical)?.id ?? list[0]?.id ?? null)
@@ -191,6 +189,7 @@ export default function FormulationPanel() {
         leafMassG: leaf,
         nanocarrierMassG: nano,
         totalMassG: leaf + nano,
+        components: [],
         methodNotes: form.methodNotes.trim() || undefined,
         storageNotes: form.storageNotes.trim() || undefined,
         markerCompound: form.markerCompound.trim() || undefined,
@@ -295,7 +294,9 @@ export default function FormulationPanel() {
             <div className="max-h-[560px] space-y-1 overflow-y-auto pr-0.5">
               {filtered.map((r) => {
                 const active = r.id === selectedId && mode === "view"
-                const leafPct = r.totalMassG > 0 ? (r.leafMassG / r.totalMassG) * 100 : 0
+                const totalMass = r.totalMassG ?? 0
+                const leafMass = r.leafMassG ?? 0
+                const leafPct = totalMass > 0 ? (leafMass / totalMass) * 100 : 0
                 return (
                   <button
                     key={r.id}
@@ -463,7 +464,7 @@ export default function FormulationPanel() {
                     type="button"
                     disabled={busy}
                     onClick={() => void save()}
-                    className="rounded-xl bg-teal-700 px-3.5 py-2 text-xs font-semibold text-white transition-[filter] hover:brightness-105 disabled:opacity-60"
+                    className="nano-setup-save"
                   >
                     {busy ? "Saving…" : "Save"}
                   </button>
@@ -520,27 +521,27 @@ export default function FormulationPanel() {
                     <CompositionStat
                       icon={Leaf}
                       label="Dried leaf"
-                      value={`${selected.leafMassG} g`}
+                      value={`${selected.leafMassG ?? 0} g`}
                       tone="green"
                     />
                     <CompositionStat
                       icon={Beaker}
                       label="Chitosan–TPP"
-                      value={`${selected.nanocarrierMassG} g`}
+                      value={`${selected.nanocarrierMassG ?? 0} g`}
                       tone="teal"
                     />
                     <CompositionStat
                       icon={Scale}
                       label="Total mass"
-                      value={`${selected.totalMassG} g`}
+                      value={`${selected.totalMassG ?? 0} g`}
                       tone="cyan"
                     />
                   </div>
 
                   <CompositionBar
-                    leaf={selected.leafMassG}
-                    carrier={selected.nanocarrierMassG}
-                    total={selected.totalMassG}
+                    leaf={selected.leafMassG ?? 0}
+                    carrier={selected.nanocarrierMassG ?? 0}
+                    total={selected.totalMassG ?? 0}
                   />
 
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

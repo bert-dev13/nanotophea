@@ -50,9 +50,10 @@ interface WorkspaceModulesProps {
   tab: string
   readiness: StudyReadiness | null
   onOpenTab: (tab: string) => void
+  onOpenSetup?: (tab: string) => void
 }
 
-export function WorkspaceModules({ step, tab, readiness, onOpenTab }: WorkspaceModulesProps) {
+export function WorkspaceModules({ step, tab, readiness, onOpenTab, onOpenSetup }: WorkspaceModulesProps) {
   if (step === "setup" && tab === "formulation") return <FormulationPanel />
   if (step === "setup" && tab === "phytochemicals") return <PhytochemicalsCatalog />
   if (step === "setup" && tab === "proteins") return <ProteinsCatalog />
@@ -63,8 +64,10 @@ export function WorkspaceModules({ step, tab, readiness, onOpenTab }: WorkspaceM
     return (
       <InSilicoOverview
         compounds={readiness ? readiness.compounds : null}
+        proteins={readiness ? readiness.proteins : null}
         admetRuns={readiness ? readiness.admetRuns : null}
         onOpenAdmet={() => onOpenTab("admet")}
+        onOpenSetup={onOpenSetup}
       />
     )
   }

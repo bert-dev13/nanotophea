@@ -5,6 +5,7 @@ import {
   continueRequirements,
   emptyReadiness,
   parseWorkspaceSlug,
+  stepAvailability,
   stepIdFromPathname,
   stepRecordStatus,
   studyPath,
@@ -24,6 +25,16 @@ describe("study workspace routing", () => {
     const parsed = parseWorkspaceSlug(["docking"])
     assert.equal(parsed.step.id, "docking")
     assert.equal(parsed.tab, "")
+  })
+
+  it("does not keep a standalone references section in Research Setup", () => {
+    assert.equal(
+      WORKFLOW_STEPS[0].tabs.some((tab) => tab.id === "references"),
+      false
+    )
+    const parsed = parseWorkspaceSlug(["setup", "references"])
+    assert.equal(parsed.step.id, "setup")
+    assert.equal(parsed.tab, "formulation")
   })
 
   it("falls back when a tab id is unknown", () => {
@@ -85,6 +96,21 @@ describe("record-backed step status", () => {
     compounds: 1,
     proteins: 1,
     cellLines: 1,
+  })
+
+  it("locks later steps until all four setup categories have a record", () => {
+    assert.equal(stepAvailability("insilico", emptyReadiness(), false), "locked")
+    assert.equal(stepAvailability("docking", emptyReadiness(), false), "locked")
+    assert.equal(stepAvailability("setup", emptyReadiness(), true), "current")
+    const done = emptyReadiness({
+      formulations: 1,
+      compounds: 1,
+      proteins: 1,
+      cellLines: 1,
+    })
+    assert.equal(stepAvailability("setup", done, false), "completed")
+    assert.equal(stepAvailability("insilico", done, false), "available")
+    assert.equal(stepAvailability("insilico", done, true), "current")
   })
 
   it("leaves status unknown until records are loaded", () => {

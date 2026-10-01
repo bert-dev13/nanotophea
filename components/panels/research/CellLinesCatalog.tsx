@@ -38,7 +38,6 @@ import {
   listCellLines,
   updateCellLine,
 } from "@/lib/repositories/researchDataRepository"
-import { seedDefaultResearchData } from "@/lib/seed/defaultResearchData"
 import { toUserFacingError } from "@/lib/errors/userFacing"
 
 type Mode = "view" | "create" | "edit"
@@ -123,7 +122,6 @@ export default function CellLinesCatalog() {
     setLoading(true)
     setError(null)
     try {
-      await seedDefaultResearchData(activeStudy.id, profile)
       const list = await listCellLines(activeStudy.id)
       setRows(list)
       setSelectedId((prev) => prev ?? list.find((c) => c.isPrimaryExperimental)?.id ?? list[0]?.id ?? null)
@@ -359,7 +357,7 @@ export default function CellLinesCatalog() {
                 <ProvenanceFormFields value={form.provenance} onChange={(provenance) => setForm({ ...form, provenance })} />
                 <div className="flex justify-end gap-2">
                   <button type="button" onClick={() => setMode("view")} className="rounded-lg px-3 py-1.5 text-xs font-semibold border" style={{ borderColor: "#dde5ef", color: "#546e8a" }}>Cancel</button>
-                  <button type="button" disabled={busy} onClick={() => void save()} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ background: "#00a882" }}>{busy ? "Saving…" : "Save"}</button>
+                  <button type="button" disabled={busy} onClick={() => void save()} className="nano-setup-save">{busy ? "Saving…" : "Save"}</button>
                 </div>
               </div>
             )}

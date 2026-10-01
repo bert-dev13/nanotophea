@@ -121,8 +121,13 @@ async function deleteEnvelope(
 export async function createFormulation(
   studyId: string,
   actor: Actor,
-  input: CreateBody<Formulation> & { leafMassG: number; nanocarrierMassG: number; name: string }
+  input: CreateBody<Formulation> & { name: string }
 ): Promise<Formulation> {
+  const totalMassG =
+    input.totalMassG ??
+    (input.leafMassG != null && input.nanocarrierMassG != null
+      ? input.leafMassG + input.nanocarrierMassG
+      : undefined)
   return createEnvelope(
     studyId,
     STUDY_SUBCOLLECTIONS.formulations,
@@ -130,7 +135,8 @@ export async function createFormulation(
     "REFERENCE",
     {
       ...input,
-      totalMassG: input.totalMassG ?? input.leafMassG + input.nanocarrierMassG,
+      ...(totalMassG != null ? { totalMassG } : {}),
+      components: input.components ?? [],
       referenceIds: input.referenceIds ?? [],
       isCanonical: input.isCanonical ?? false,
     },

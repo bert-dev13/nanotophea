@@ -16,19 +16,19 @@ export function AppHeader({ onOpenMobileNav }: AppHeaderProps) {
   const title = inStudy ? activeStudy?.title || "Current study" : "Studies"
 
   return (
-    <header className="nano-topbar sticky top-0 z-30 flex h-12 shrink-0 items-center gap-3 border-b px-3 sm:px-5">
+    <header className="nano-topbar sticky top-0 z-30 flex shrink-0 items-center gap-3 border-b px-3 sm:px-5">
       <button
         type="button"
-        className="group flex shrink-0 items-center gap-2 rounded-lg px-1 py-1 transition-colors duration-150 hover:bg-teal-50 lg:hidden"
+        className="nano-topbar-menu inline-flex lg:hidden"
         aria-label="Open navigation"
         onClick={onOpenMobileNav}
       >
-        <BrandLogo
-          size="sm"
-          className="!h-7 !w-7 transition-opacity duration-150 group-hover:opacity-85"
-        />
+        <BrandLogo size="sm" className="!h-7 !w-7" />
       </button>
-      <p className="min-w-0 truncate text-[13px] font-semibold text-[var(--foreground)]">{title}</p>
+      <div className="min-w-0">
+        <p className="nano-topbar-kicker">{inStudy ? "Current study" : "Workspace"}</p>
+        <p className="nano-topbar-title">{title}</p>
+      </div>
     </header>
   )
 }

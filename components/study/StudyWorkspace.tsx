@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation"
 import { ArrowLeft, ArrowRight } from "lucide-react"
 import { useStudy } from "@/components/providers/StudyProvider"
 import { useWorkflowStatus } from "@/components/study/WorkflowStatus"
+import { InSilicoScreening } from "@/components/study/InSilicoScreening"
+import { AnalysisInterpretation } from "@/components/study/AnalysisInterpretation"
+import { LaboratoryValidation } from "@/components/study/LaboratoryValidation"
+import { MolecularDocking } from "@/components/study/MolecularDocking"
+import { ResearchSetup } from "@/components/study/ResearchSetup"
 import { WorkspaceModules } from "@/components/study/WorkspaceModules"
 import type { StudyStatus } from "@/lib/domain/models"
 import {
@@ -13,6 +18,7 @@ import {
   nextStep,
   parseWorkspaceSlug,
   previousStep,
+  stepRequirementsMet,
   studyPath,
   workspacePath,
   writeWorkflowProgress,
@@ -39,6 +45,12 @@ export function StudyWorkspace({ studyId, slug }: { studyId: string; slug: strin
   useEffect(() => {
     if (actual !== canonical) router.replace(canonical)
   }, [actual, canonical, router])
+
+  useEffect(() => {
+    if (!readiness || step.id === "setup") return
+    if (stepRequirementsMet("setup", readiness)) return
+    router.replace(studyPath(studyId, "setup", "formulation"))
+  }, [readiness, step.id, studyId, router])
 
   const known = studies.some((s) => s.id === studyId)
   const matched = activeStudy?.id === studyId
@@ -95,6 +107,103 @@ export function StudyWorkspace({ studyId, slug }: { studyId: string; slug: strin
 
   if (!matched || !activeStudy) {
     return <p className="py-10 text-sm text-[var(--muted-foreground)]">Opening study…</p>
+  }
+
+  const openSetup = (setupTab: string) => {
+    router.push(studyPath(studyId, "setup", setupTab), { scroll: false })
+  }
+
+  if (step.id === "setup") {
+    return (
+      <ResearchSetup
+        title={activeStudy.title}
+        tab={tab}
+        readiness={readiness}
+        checkError={checkError}
+        checking={checking}
+        missing={missing}
+        onTab={goTab}
+        onContinue={() => void onContinue()}
+        onChanged={() => void refresh()}
+      />
+    )
+  }
+
+  if (step.id === "insilico") {
+    return (
+      <InSilicoScreening
+        title={activeStudy.title}
+        status={activeStudy.status}
+        tab={tab}
+        readiness={readiness}
+        checkError={checkError}
+        checking={checking}
+        missing={missing}
+        onTab={goTab}
+        onBack={() => goStep("setup")}
+        onGap={openSetup}
+        onContinue={() => void onContinue()}
+      >
+        <WorkspaceModules
+          step={step.id}
+          tab={tab}
+          readiness={readiness}
+          onOpenTab={goTab}
+          onOpenSetup={openSetup}
+        />
+      </InSilicoScreening>
+    )
+  }
+
+  if (step.id === "docking") {
+    return (
+      <MolecularDocking
+        title={activeStudy.title}
+        status={activeStudy.status}
+        readiness={readiness}
+        checkError={checkError}
+        checking={checking}
+        onBack={() => goStep("insilico")}
+        onOpenSetup={openSetup}
+        onContinue={() => void onContinue()}
+      >
+        <WorkspaceModules step={step.id} tab={tab} readiness={readiness} onOpenTab={goTab} />
+      </MolecularDocking>
+    )
+  }
+
+  if (step.id === "laboratory") {
+    return (
+      <LaboratoryValidation
+        title={activeStudy.title}
+        status={activeStudy.status}
+        tab={tab}
+        readiness={readiness}
+        checkError={checkError}
+        checking={checking}
+        onTab={goTab}
+        onBack={() => goStep("predictions")}
+        onContinue={() => void onContinue()}
+      >
+        <WorkspaceModules step={step.id} tab={tab} readiness={readiness} onOpenTab={goTab} />
+      </LaboratoryValidation>
+    )
+  }
+
+  if (step.id === "analysis") {
+    return (
+      <AnalysisInterpretation
+        title={activeStudy.title}
+        status={activeStudy.status}
+        tab={tab}
+        readiness={readiness}
+        checkError={checkError}
+        onTab={goTab}
+        onBack={() => goStep("laboratory")}
+      >
+        <WorkspaceModules step={step.id} tab={tab} readiness={readiness} onOpenTab={goTab} />
+      </AnalysisInterpretation>
+    )
   }
 
   return (

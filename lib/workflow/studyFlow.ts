@@ -36,7 +36,7 @@ export const WORKFLOW_STEPS: WorkflowStep[] = [
       { id: "phytochemicals", label: "Phytochemicals" },
       { id: "proteins", label: "Target Proteins" },
       { id: "cell-line", label: "Cell Line" },
-      { id: "references", label: "References" },
+      { id: "review", label: "Review" },
     ],
   },
   {
@@ -307,6 +307,28 @@ export function stepRecordStatus(
   return stepRequirementsMet(stepId, readiness) ? "complete" : "incomplete"
 }
 
+/** Sidebar state for one workflow step. */
+export type StepAvailability = "completed" | "current" | "available" | "locked" | "review"
+
+/**
+ * Step 02 and later stay locked until Research Setup has all four required
+ * categories. Later steps are not redesigned here; once setup is complete
+ * they stay open, and record counts still mark them completed or in review.
+ */
+export function stepAvailability(
+  stepId: StepId,
+  readiness: StudyReadiness | null,
+  current: boolean
+): StepAvailability {
+  const setupDone = Boolean(readiness && stepRequirementsMet("setup", readiness))
+  if (stepId !== "setup" && readiness && !setupDone) return "locked"
+  const record = stepRecordStatus(stepId, readiness)
+  if (record === "review") return "review"
+  if (current) return "current"
+  if (record === "complete") return "completed"
+  return "available"
+}
+
 /** Step open in `/study/{id}/...`, or null when the path is not that study. */
 export function stepIdFromPathname(pathname: string, studyId: string): StepId | null {
   const prefix = `/study/${studyId}`
@@ -322,7 +344,7 @@ export const LEGACY_MODULE_TARGETS: Record<string, { step: StepId; tab?: string 
   "/research/phytochemicals": { step: "setup", tab: "phytochemicals" },
   "/research/proteins": { step: "setup", tab: "proteins" },
   "/research/cell-lines": { step: "setup", tab: "cell-line" },
-  "/research/references": { step: "setup", tab: "references" },
+  "/research/references": { step: "setup", tab: "formulation" },
   "/insilico/admet": { step: "insilico", tab: "admet" },
   "/insilico/docking": { step: "docking" },
   "/insilico/predictions/dpph": { step: "predictions", tab: "dpph" },

@@ -884,7 +884,7 @@ export function CharacterizationWorkspace() {
           </FormField>
 
           <div className="flex gap-2">
-            <button type="button" disabled={saving} onClick={() => void save()} className="inline-flex items-center gap-1 rounded-md px-3 py-2 text-xs font-bold text-white" style={{ background: "#00a882" }}>
+            <button type="button" disabled={saving} onClick={() => void save()} className="nano-setup-save">
               <Plus size={12} /> {saving ? "Saving…" : "Save dataset"}
             </button>
             <button type="button" onClick={() => setMode("view")} className="rounded-md border px-3 py-2 text-xs font-semibold" style={{ borderColor: "#dde5ef" }}>

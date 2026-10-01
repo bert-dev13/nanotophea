@@ -149,7 +149,9 @@ export default function DashboardPanel() {
               )}
 
               <div className="mt-4 flex flex-wrap gap-2">
-                <MetaChip icon={Microscope} label={activeStudy?.primaryCellLine ?? "HepG2"} tone="teal" />
+                {activeStudy?.primaryCellLine ? (
+                  <MetaChip icon={Microscope} label={activeStudy.primaryCellLine} tone="teal" />
+                ) : null}
                 <MetaChip
                   icon={Shield}
                   label={`Contract ${activeStudy?.contractVersion ?? "—"}`}
@@ -158,12 +160,13 @@ export default function DashboardPanel() {
                 <MetaChip icon={Leaf} label="NanoHepatoTea" tone="green" />
               </div>
 
-              <p className="mt-4 max-w-xl text-[13px] leading-relaxed text-slate-600">
-                <span className="font-semibold text-slate-800">Formulation</span>
-                {" — "}
-                {activeStudy?.formulationSummary ??
-                  "2 g dried Phyllanthus niruri leaf + 1 g Chitosan–TPP per tea bag"}
-              </p>
+              {activeStudy?.formulationSummary ? (
+                <p className="mt-4 max-w-xl text-[13px] leading-relaxed text-slate-600">
+                  <span className="font-semibold text-slate-800">Formulation</span>
+                  {" — "}
+                  {activeStudy.formulationSummary}
+                </p>
+              ) : null}
             </div>
 
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-[15rem]">

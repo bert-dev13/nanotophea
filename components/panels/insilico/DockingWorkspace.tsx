@@ -904,8 +904,7 @@ export default function DockingWorkspace() {
                     type="button"
                     disabled={busy}
                     onClick={() => void save()}
-                    className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
-                    style={{ background: "#00a882" }}
+                    className="nano-setup-save"
                   >
                     {busy ? "Saving…" : "Save docking run"}
                   </button>

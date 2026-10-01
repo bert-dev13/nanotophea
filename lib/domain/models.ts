@@ -41,10 +41,8 @@ export const StudySchema = z.object({
   shortTitle: z.string().optional(),
   description: z.string().optional(),
   status: StudyStatusSchema.default("draft"),
-  primaryCellLine: z.string().default("HepG2"),
-  formulationSummary: z.string().default(
-    "2 g dried Phyllanthus niruri leaf + 1 g Chitosan–TPP per tea bag"
-  ),
+  primaryCellLine: z.string().default(""),
+  formulationSummary: z.string().default(""),
   fairYear: z.string().optional(),
   researcherNames: z.array(z.string()).optional(),
   adviserNames: z.array(z.string()).optional(),
@@ -85,13 +83,22 @@ export const ScientificRecordBaseSchema = z.object({
   notes: z.string().optional(),
 })
 
+export const FormulationComponentSchema = z.object({
+  name: z.string().min(1),
+  amount: z.number().nonnegative().optional(),
+  unit: z.string().optional(),
+})
+export type FormulationComponent = z.infer<typeof FormulationComponentSchema>
+
 export const FormulationSchema = ScientificRecordBaseSchema.extend({
   name: z.string().min(1),
   plantMaterial: z.string().optional(),
   scientificName: z.string().optional(),
-  leafMassG: z.number().positive(),
-  nanocarrierMassG: z.number().positive(),
-  totalMassG: z.number().positive(),
+  components: z.array(FormulationComponentSchema).default([]),
+  /** Legacy tea-bag masses. New formulations use `components` instead. */
+  leafMassG: z.number().positive().optional(),
+  nanocarrierMassG: z.number().positive().optional(),
+  totalMassG: z.number().positive().optional(),
   methodNotes: z.string().optional(),
   storageNotes: z.string().optional(),
   markerCompound: z.string().optional(),

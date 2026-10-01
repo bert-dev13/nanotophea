@@ -47,7 +47,6 @@ import {
   listCompounds,
   updateCompound,
 } from "@/lib/repositories/researchDataRepository"
-import { seedDefaultResearchData } from "@/lib/seed/defaultResearchData"
 import { toUserFacingError } from "@/lib/errors/userFacing"
 
 type Mode = "view" | "create" | "edit"
@@ -132,7 +131,6 @@ export default function PhytochemicalsCatalog() {
     setLoading(true)
     setError(null)
     try {
-      await seedDefaultResearchData(activeStudy.id, profile)
       const list = await listCompounds(activeStudy.id)
       setRows(list)
       setSelectedId((prev) => prev ?? list.find((c) => c.isPrimaryMarker)?.id ?? list[0]?.id ?? null)
@@ -484,7 +482,7 @@ export default function PhytochemicalsCatalog() {
                     type="button"
                     disabled={busy}
                     onClick={() => void save()}
-                    className="rounded-xl bg-violet-700 px-3.5 py-2 text-xs font-semibold text-white transition-[filter] hover:brightness-105 disabled:opacity-60"
+                    className="nano-setup-save"
                   >
                     {busy ? "Saving…" : "Save"}
                   </button>
