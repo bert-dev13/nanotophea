@@ -17,6 +17,7 @@ GOOGLE_APPLICATION_CREDENTIALS*
 
 .vite/
 .docking-venv/
+.docking-artifacts/
 .adme-venv/
 tools/vina/
 vite.config.*.timestamp-*
