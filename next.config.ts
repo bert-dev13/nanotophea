@@ -1,6 +1,16 @@
 import type { NextConfig } from "next"
 
 const nextConfig: NextConfig = {
+  // The public test link is an ngrok hostname. Next.js dev rejects that host
+  // unless it is listed here. The hostname changes; the patterns do not.
+  allowedDevOrigins: [
+    "*.ngrok.app",
+    "*.ngrok-free.app",
+    "*.ngrok.io",
+    "*.ngrok.dev",
+    "*.ngrok-free.dev",
+  ],
+  serverExternalPackages: ["together-ai"],
   images: {
     remotePatterns: [
       {

@@ -63,11 +63,12 @@ const COPY: Record<SetupCategory, { empty: string; add: string; catalog: string 
 
 export function SetupRecords({
   category,
-  onChanged,
+  onChangedAction,
 }: {
   category: SetupCategory
-  onChanged: () => void
+  onChangedAction?: () => void
 }) {
+  const handleChanged = onChangedAction ?? (() => {})
   const { user } = useAuth()
   const { activeStudy, membership, updateActiveStudy } = useStudy()
   const canEdit = canEditResearchData(membership?.role)
@@ -188,7 +189,7 @@ export function SetupRecords({
       await syncStudy(list)
       setMode("list")
       setEditingId(null)
-      onChanged()
+      handleChanged()
     } catch (e) {
       setError(toUserFacingError(e, "Could not save this record"))
     } finally {
@@ -211,7 +212,7 @@ export function SetupRecords({
       await syncStudy(list)
       setPendingDelete(null)
       if (editingId === id) setMode("list")
-      onChanged()
+      handleChanged()
     } catch (e) {
       setError(toUserFacingError(e, "Could not delete this record"))
     } finally {
@@ -250,7 +251,7 @@ export function SetupRecords({
       setRows(list)
       await syncStudy(list)
       setCatalogOpen(false)
-      onChanged()
+      handleChanged()
     } catch (e) {
       setError(toUserFacingError(e, "Could not add that record"))
     } finally {

@@ -1,18 +1,22 @@
 ---
-description: Molecular docking is Vina import-only — never fake affinities
-globs: "**/docking/**/*,**/DockingWorkspace.tsx,**/scientificRunRepository.ts,docs/STUDY_DESIGN_CONTRACT.md"
+description: Molecular docking runs AutoDock Vina on the server — never fake affinities
+globs: "**/docking/**/*,**/DockingPairsWorkspace.tsx,**/services/docking/**/*,**/scientificRunRepository.ts"
 alwaysApply: false
 ---
 
 # Molecular Docking (AutoDock Vina)
 
-NANOTOPHEA does **not** execute AutoDock Vina in Phase 5.
+Docking pairs are the study's selected phytochemicals × target proteins.
 
-- Researchers run Vina externally and **enter/import real results**.
-- Evidence class for genuine Vina outputs: **PREDICTED**.
-- Never generate ΔG, Ki, RMSD, confidence %, CNN scores, or energy decomposition.
-- Ligands from `compounds`; proteins from `proteins`.
-- 3D view: receptor PDB only unless real pose files are supported later.
-- No Firebase Storage for PDBQT/logs in this phase.
+- The study page queues a server job. AutoDock Vina does not run in the browser.
+- If Vina, Python, or a preparation tool is missing, show **Docking engine unavailable** and do not write an affinity.
+- Researchers do not type a search box, chains, or Vina settings. A run uses a curated docking profile whose box is calculated from atoms in the verified PDB.
+- If no curated profile matches the target, show "Docking profile not configured for this target." and do not ask for coordinates.
+- Researcher-facing failures are "Preparation failed", "Docking failed", or "Configuration unavailable". Log the backend reason on the server.
+- Do not replace a catalog PDB ID automatically.
+- Evidence class for a Vina result: **PREDICTED**.
+- Never generate affinity, RMSD, residues, interactions, modes, or confidence scores.
+- Show a 3D pose only from Vina output coordinates plus the RCSB receptor. Do not substitute a PubChem conformer.
+- Do not store receptor or pose files inside a Firestore document. Use `DOCKING_ARTIFACT_DIR` when file storage is configured.
 
-See `docs/STUDY_DESIGN_CONTRACT.md` and `docs/PHASE5_DOCKING_SUMMARY.md`.
+See `services/docking/README.md`.

@@ -46,6 +46,9 @@ export function evaluateInterpretationFreshness(
   links: Array<{ sourceType: string; sourceId: string; sourceUpdatedAt?: string; missing?: boolean }>
 ): "CURRENT" | "STALE" {
   if (links.some((l) => l.missing)) return "STALE"
+  // No linked rows means there is no source timestamp that can drift.
+  // AI interpretations store an evidence-version hash separately and link nothing.
+  if (links.length === 0) return "CURRENT"
   const next = buildInterpretationFingerprint(links)
   if (!storedFingerprint) return "CURRENT"
   return next === storedFingerprint ? "CURRENT" : "STALE"

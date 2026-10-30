@@ -315,6 +315,12 @@ export function computeComparison(input: {
     )
   }
 
+  if (evidence === "SIMULATION") {
+    notices.push(
+      "Predictions compared with experimental observations.",
+    )
+  }
+
   const canPersist = compatibility.status !== "INCOMPATIBLE"
 
   return {

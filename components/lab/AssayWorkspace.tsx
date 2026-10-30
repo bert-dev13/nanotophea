@@ -319,6 +319,7 @@ export function AssayWorkspace({ assay }: { assay: "dpph" | "ldh" }) {
     return {
       assay,
       assayType: assay,
+      observations: [],
       datasetName: form.datasetName.trim(),
       formulationId: form.formulationId || undefined,
       cellLineId,

@@ -1,5 +1,7 @@
+"use server"
+
 /**
- * Comparison repository — Prediction vs Experimental (DPPH / LDH only).
+ * Comparison repository — Prediction vs Experimental (DPPH / LDH only) using MySQL/MariaDB.
  * Never invents values or claims experimental validation.
  */
 import {
@@ -11,15 +13,8 @@ import {
   type ComparisonUpdateInput,
 } from "@/lib/domain/models"
 import { defaultProvenance } from "@/lib/domain/provenance"
-import { STUDY_SUBCOLLECTIONS, studySub } from "@/lib/firebase/paths"
-import {
-  deleteDocData,
-  docRef,
-  getDocData,
-  listDocs,
-  setDocData,
-  updateDocData,
-} from "@/lib/firebase/firestore"
+import { execute, query, queryOne } from "@/lib/db/mysql"
+import { mapComparison } from "@/lib/repositories/mysqlMappers"
 import { getLabDataset, listLabReplicates } from "@/lib/repositories/labRepository"
 import {
   evaluateStatisticsFreshness,
@@ -35,11 +30,17 @@ import {
 } from "@/lib/comparison/runComparison"
 import { isComparisonEligibleEndpoint } from "@/lib/comparison/compatibility"
 import { getLabAssayConfig } from "@/lib/lab/labAssayConfig"
+import { randomUUID } from "crypto"
 
 type Actor = { id: string }
 
-function stripUndefined(obj: Record<string, unknown>) {
-  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined))
+function toJson(val: unknown): string | null {
+  if (val === undefined || val === null) return null
+  return JSON.stringify(val)
+}
+
+function generateDocId(): string {
+  return randomUUID().replace(/-/g, "").slice(0, 20)
 }
 
 async function loadComparisonSources(
@@ -51,87 +52,81 @@ async function loadComparisonSources(
     statisticsAnalysisId?: string
   }
 ) {
-  if (!isComparisonEligibleEndpoint(input.endpoint)) {
-    throw new Error("Only DPPH and LDH may be compared under the Study Design Contract.")
+  const [predictionRun, labDataset, statsAnalysis] = await Promise.all([
+    getPredictionRun(studyId, input.predictionRunId),
+    getLabDataset(studyId, input.labDatasetId),
+    input.statisticsAnalysisId
+      ? getStatisticsAnalysis(studyId, input.statisticsAnalysisId)
+      : Promise.resolve(null),
+  ])
+
+  if (!predictionRun) throw new Error("Referenced prediction run was not found in this study.")
+  if (!labDataset) throw new Error("Referenced laboratory dataset was not found in this study.")
+
+  if (predictionRun.endpoint !== input.endpoint) {
+    throw new Error(
+      `Prediction run endpoint (${predictionRun.endpoint}) does not match comparison endpoint (${input.endpoint}).`
+    )
+  }
+  if (labDataset.assayType !== input.endpoint) {
+    throw new Error(
+      `Laboratory dataset assay (${labDataset.assayType}) does not match comparison endpoint (${input.endpoint}).`
+    )
   }
 
-  const prediction = await getPredictionRun(studyId, input.predictionRunId)
-  if (!prediction) throw new Error("Prediction run not found in this study.")
-  if (prediction.studyId !== studyId) {
-    throw new Error("Study isolation violation: prediction run does not belong to this study.")
-  }
-
-  const dataset = await getLabDataset(studyId, input.labDatasetId)
-  if (!dataset) throw new Error("Laboratory dataset not found in this study.")
-  if (dataset.studyId !== studyId) {
-    throw new Error("Study isolation violation: lab dataset does not belong to this study.")
-  }
-
-  const replicates = await listLabReplicates(studyId, input.labDatasetId)
-
-  let statistics = null
-  let statisticsFreshness: "CURRENT" | "STALE" | null = null
-  if (input.statisticsAnalysisId) {
-    statistics = await getStatisticsAnalysis(studyId, input.statisticsAnalysisId)
-    if (!statistics) throw new Error("Statistics analysis not found in this study.")
-    if (statistics.assayType !== input.endpoint) {
-      throw new Error("Statistics assay does not match comparison endpoint.")
+  if (statsAnalysis) {
+    if (statsAnalysis.assayType !== input.endpoint) {
+      throw new Error("Statistics analysis assay does not match comparison endpoint.")
     }
-    if (statistics.labDatasetId !== input.labDatasetId) {
-      throw new Error("Statistics analysis is not linked to the selected experimental dataset.")
+    if (statsAnalysis.labDatasetId !== labDataset.id) {
+      throw new Error("Statistics analysis does not belong to the selected laboratory dataset.")
     }
-    statisticsFreshness = statistics.freshness ?? (await evaluateStatisticsFreshness(studyId, statistics))
   }
 
-  return { prediction, dataset, replicates, statistics, statisticsFreshness }
+  const replicates = await listLabReplicates(studyId, labDataset.id)
+
+  return {
+    predictionRun,
+    labDataset,
+    statsAnalysis,
+    replicates,
+  }
 }
 
 export async function previewComparison(studyId: string, rawInput: ComparisonCreateInput) {
   const input = ComparisonCreateInputSchema.parse(rawInput)
-  const sources = await loadComparisonSources(studyId, input)
-  const experimentalMetricKey =
-    input.experimentalMetricKey || getLabAssayConfig(input.endpoint).primaryMetricKey
+  const { predictionRun, labDataset, statsAnalysis, replicates } =
+    await loadComparisonSources(studyId, input)
 
-  const computed = computeComparison({
+  const cfg = getLabAssayConfig(input.endpoint)
+  const metricKey = input.experimentalMetricKey || cfg?.primaryMetricKey || "inhibitionPercent"
+
+  const statsFreshness = statsAnalysis
+    ? await evaluateStatisticsFreshness(statsAnalysis)
+    : undefined
+
+  const computation = computeComparison({
     endpoint: input.endpoint,
-    prediction: sources.prediction,
-    dataset: sources.dataset,
-    replicates: sources.replicates,
-    experimentalMetricKey,
-    statistics: sources.statistics,
-    statisticsFreshness: sources.statisticsFreshness,
+    prediction: predictionRun,
+    dataset: labDataset,
+    replicates,
+    statistics: statsAnalysis ?? undefined,
+    statisticsFreshness: statsFreshness ?? undefined,
+    experimentalMetricKey: metricKey,
   })
 
-  return { ...sources, experimentalMetricKey, computed }
-}
-
-export async function evaluateComparisonFreshness(
-  studyId: string,
-  record: ComparisonRecord
-): Promise<"CURRENT" | "STALE"> {
-  try {
-    const sources = await loadComparisonSources(studyId, {
-      endpoint: record.endpoint,
-      predictionRunId: record.predictionRunId,
-      labDatasetId: record.labDatasetId,
-      statisticsAnalysisId: record.statisticsAnalysisId,
-    })
-    const fp = buildComparisonFingerprint({
-      predictionUpdatedAt: sources.prediction.updatedAt,
-      predictionId: sources.prediction.id,
-      predictionPoints: sources.prediction.resultPoints,
-      labDatasetUpdatedAt: sources.dataset.updatedAt,
-      labDatasetId: sources.dataset.id,
-      replicates: sources.replicates,
-      statisticsId: sources.statistics?.id,
-      statisticsUpdatedAt: sources.statistics?.updatedAt,
-      statisticsFingerprint: sources.statistics?.sourceFingerprint,
-    })
-    if (fp !== record.sourceFingerprint) return "STALE"
-    if (sources.statisticsFreshness === "STALE") return "STALE"
-    return "CURRENT"
-  } catch {
-    return "STALE"
+  return {
+    predictionRun,
+    labDataset,
+    statsAnalysis,
+    replicates,
+    experimentalMetricKey: metricKey,
+    computation,
+    statisticsFreshness: statsFreshness,
+    prediction: predictionRun,
+    dataset: labDataset,
+    statistics: statsAnalysis,
+    computed: computation,
   }
 }
 
@@ -141,186 +136,203 @@ export async function createComparison(
   rawInput: ComparisonCreateInput
 ): Promise<ComparisonRecord> {
   const input = ComparisonCreateInputSchema.parse(rawInput)
-  const { prediction, dataset, replicates, statistics, statisticsFreshness, experimentalMetricKey, computed } =
-    await previewComparison(studyId, input)
 
-  if (!computed.canPersist) {
-    throw new Error(computed.blockReason || "Comparison is incompatible and cannot be saved.")
+  if (!isComparisonEligibleEndpoint(input.endpoint)) {
+    throw new Error(
+      `Endpoint "${input.endpoint}" is not eligible for comparison under the Study Design Contract. Eligible: DPPH, LDH.`
+    )
   }
 
-  // Stale statistics may be linked with warning, but never treated as fresh for aligned claims
-  if (statistics && statisticsFreshness === "STALE") {
-    // allowed to save with warning already in computed.notices
-  }
+  const { predictionRun, labDataset, statsAnalysis, replicates } =
+    await loadComparisonSources(studyId, input)
 
-  const fingerprint = buildComparisonFingerprint({
-    predictionUpdatedAt: prediction.updatedAt,
-    predictionId: prediction.id,
-    predictionPoints: prediction.resultPoints,
-    labDatasetUpdatedAt: dataset.updatedAt,
-    labDatasetId: dataset.id,
+  const cfg = getLabAssayConfig(input.endpoint)
+  const metricKey = input.experimentalMetricKey || cfg?.primaryMetricKey || "inhibitionPercent"
+
+  const statsFreshness = statsAnalysis
+    ? await evaluateStatisticsFreshness(statsAnalysis)
+    : undefined
+
+  const computation = computeComparison({
+    endpoint: input.endpoint,
+    prediction: predictionRun,
+    dataset: labDataset,
     replicates,
-    statisticsId: statistics?.id,
-    statisticsUpdatedAt: statistics?.updatedAt,
-    statisticsFingerprint: statistics?.sourceFingerprint,
+    statistics: statsAnalysis ?? undefined,
+    statisticsFreshness: statsFreshness ?? undefined,
+    experimentalMetricKey: metricKey,
   })
 
+  const id = generateDocId()
   const now = new Date().toISOString()
-  const ref = docRef(studySub(studyId, STUDY_SUBCOLLECTIONS.comparisons))
 
   const record = ComparisonRecordSchema.parse({
-    id: ref.id,
+    id,
     studyId,
     endpoint: input.endpoint,
     assay: input.endpoint,
-    predictionRunId: prediction.id,
-    predictionRunName: prediction.runName,
-    predictionEvidenceClass: computed.predictionEvidenceClass,
-    labDatasetId: dataset.id,
-    labDatasetName: dataset.datasetName,
-    experimentalMetricKey,
-    statisticsAnalysisId: statistics?.id,
-    statisticsFreshnessAtSave: statisticsFreshness ?? undefined,
-    compatibilityStatus: computed.compatibility.status,
-    compatibilityReasons: computed.compatibility.reasons,
-    comparisonMode: computed.comparisonMode,
-    alignedPoints: computed.alignedPoints,
+
+    predictionRunId: predictionRun.id,
+    predictionRunName: predictionRun.runName,
+    predictionEvidenceClass: predictionRun.provenance.evidenceClass,
+
+    labDatasetId: labDataset.id,
+    labDatasetName: labDataset.datasetName,
+    experimentalMetricKey: metricKey,
+
+    statisticsAnalysisId: statsAnalysis?.id,
+    statisticsFreshnessAtSave: statsFreshness,
+
+    compatibilityStatus: computation.compatibility.status,
+    compatibilityReasons: computation.compatibility.reasons,
+    comparisonMode: computation.comparisonMode,
+    alignedPoints: computation.alignedPoints,
+
     researcherNotes: input.researcherNotes,
-    sourcePredictionUpdatedAt: prediction.updatedAt,
-    sourceLabUpdatedAt: dataset.updatedAt,
-    sourceStatisticsUpdatedAt: statistics?.updatedAt,
-    sourceFingerprint: fingerprint,
+    concordanceFlag: input.concordanceFlag ?? "not_assessed",
+
+    sourcePredictionUpdatedAt: predictionRun.updatedAt,
+    sourceLabUpdatedAt: labDataset.updatedAt,
+    sourceStatisticsUpdatedAt: statsAnalysis?.updatedAt,
+    sourceFingerprint: buildComparisonFingerprint({
+      predictionUpdatedAt: predictionRun.updatedAt,
+      predictionId: predictionRun.id,
+      predictionPoints: computation.predictionPoints,
+      labDatasetUpdatedAt: labDataset.updatedAt,
+      labDatasetId: labDataset.id,
+      replicates,
+      statisticsId: statsAnalysis?.id,
+      statisticsUpdatedAt: statsAnalysis?.updatedAt,
+      statisticsFingerprint: statsAnalysis?.sourceFingerprint,
+    }),
+
     calculationMethod: COMPARISON_CALCULATION_METHOD,
     calculationVersion: COMPARISON_CALCULATION_VERSION,
-    metrics: {},
-    concordanceFlag: input.concordanceFlag ?? "not_assessed",
+
     status: "final",
     notes: input.notes,
-    provenance: defaultProvenance("INTERPRETATION", {
+    provenance: defaultProvenance("REFERENCE", {
+      operatorId: actor.id,
       methodName: COMPARISON_CALCULATION_METHOD,
       methodVersion: COMPARISON_CALCULATION_VERSION,
-      source: `predictionRuns/${prediction.id} vs labDatasets/${dataset.id}`,
-      operatorId: actor.id,
-      assumptions:
-        "Side-by-side and optional aligned comparison only. Agreement ≠ experimental validation of the computational method.",
-      limitations:
-        "No automatic µM↔µg/mL conversion. No auto hypothesis decisions. DPPH remains qualitative/side-by-side under current units.",
+      recordedAt: now,
     }),
     createdAt: now,
     updatedAt: now,
     createdBy: actor.id,
     updatedBy: actor.id,
-    freshness: "CURRENT",
   })
 
-  await setDocData(
-    studySub(studyId, STUDY_SUBCOLLECTIONS.comparisons),
-    ref.id,
-    stripUndefined(record as unknown as Record<string, unknown>)
+  await execute(
+    `INSERT INTO comparisons (
+      id, study_id, endpoint, prediction_run_id, prediction_run_name,
+      prediction_evidence_class, lab_dataset_id, lab_dataset_name, experimental_metric_key,
+      statistics_analysis_id, statistics_freshness_at_save, compatibility_status,
+      compatibility_reasons, comparison_mode, aligned_points, researcher_notes,
+      source_prediction_updated_at, source_lab_updated_at, source_statistics_updated_at,
+      source_fingerprint, calculation_method, calculation_version, metrics,
+      concordance_flag, status, provenance, notes, created_at, updated_at, created_by, updated_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      record.id,
+      studyId,
+      record.endpoint,
+      record.predictionRunId,
+      record.predictionRunName ?? null,
+      record.predictionEvidenceClass,
+      record.labDatasetId,
+      record.labDatasetName ?? null,
+      record.experimentalMetricKey,
+      record.statisticsAnalysisId ?? null,
+      record.statisticsFreshnessAtSave ?? null,
+      record.compatibilityStatus,
+      toJson(record.compatibilityReasons),
+      record.comparisonMode,
+      toJson(record.alignedPoints),
+      record.researcherNotes ?? null,
+      record.sourcePredictionUpdatedAt,
+      record.sourceLabUpdatedAt,
+      record.sourceStatisticsUpdatedAt ?? null,
+      record.sourceFingerprint,
+      record.calculationMethod,
+      record.calculationVersion,
+      toJson(record.metrics),
+      record.concordanceFlag,
+      record.status,
+      toJson(record.provenance),
+      record.notes ?? null,
+      record.createdAt,
+      record.updatedAt,
+      record.createdBy,
+      record.updatedBy,
+    ]
   )
+
   await writeAuditLog({
     studyId,
     actorId: actor.id,
     action: "comparison.create",
     entityType: "comparison",
-    entityId: ref.id,
-    meta: {
-      endpoint: input.endpoint,
-      predictionRunId: prediction.id,
-      labDatasetId: dataset.id,
-    },
+    entityId: id,
   })
+
   return record
+}
+
+export async function listComparisons(studyId: string): Promise<ComparisonRecord[]> {
+  const rows = await query(`SELECT * FROM comparisons WHERE study_id = ? ORDER BY created_at DESC`, [studyId])
+  const records = rows.map(mapComparison)
+  return Promise.all(
+    records.map(async (r) => ({
+      ...r,
+      freshness: await evaluateComparisonFreshness(r),
+    }))
+  )
+}
+
+export async function getComparison(studyId: string, id: string): Promise<ComparisonRecord | null> {
+  const row = await queryOne(`SELECT * FROM comparisons WHERE study_id = ? AND id = ?`, [studyId, id])
+  if (!row) return null
+  const record = mapComparison(row)
+  return {
+    ...record,
+    freshness: await evaluateComparisonFreshness(record),
+  }
 }
 
 export async function updateComparison(
   studyId: string,
   id: string,
   actor: Actor,
-  rawPatch: ComparisonUpdateInput
+  rawInput: ComparisonUpdateInput
 ): Promise<ComparisonRecord> {
-  const patch = ComparisonUpdateInputSchema.parse(rawPatch)
+  const input = ComparisonUpdateInputSchema.parse(rawInput)
   const existing = await getComparison(studyId, id)
-  if (!existing) throw new Error("Comparison not found.")
+  if (!existing) throw new Error("Comparison record not found")
 
   const now = new Date().toISOString()
-  let nextStatsId = existing.statisticsAnalysisId
-  let nextStatsFreshness = existing.statisticsFreshnessAtSave
-  let nextStatsUpdatedAt = existing.sourceStatisticsUpdatedAt
-  let fingerprint = existing.sourceFingerprint
+  const fields: string[] = ["updated_at = ?", "updated_by = ?"]
+  const params: unknown[] = [now, actor.id]
 
-  if (patch.statisticsAnalysisId !== undefined) {
-    nextStatsId = patch.statisticsAnalysisId ?? undefined
-    if (nextStatsId) {
-      const preview = await previewComparison(studyId, {
-        endpoint: existing.endpoint,
-        predictionRunId: existing.predictionRunId,
-        labDatasetId: existing.labDatasetId,
-        experimentalMetricKey: existing.experimentalMetricKey,
-        statisticsAnalysisId: nextStatsId,
-      })
-      nextStatsFreshness = preview.statisticsFreshness ?? undefined
-      nextStatsUpdatedAt = preview.statistics?.updatedAt
-      fingerprint = buildComparisonFingerprint({
-        predictionUpdatedAt: preview.prediction.updatedAt,
-        predictionId: preview.prediction.id,
-        predictionPoints: preview.prediction.resultPoints,
-        labDatasetUpdatedAt: preview.dataset.updatedAt,
-        labDatasetId: preview.dataset.id,
-        replicates: preview.replicates,
-        statisticsId: preview.statistics?.id,
-        statisticsUpdatedAt: preview.statistics?.updatedAt,
-        statisticsFingerprint: preview.statistics?.sourceFingerprint,
-      })
-    } else {
-      nextStatsFreshness = undefined
-      nextStatsUpdatedAt = undefined
-      const preview = await previewComparison(studyId, {
-        endpoint: existing.endpoint,
-        predictionRunId: existing.predictionRunId,
-        labDatasetId: existing.labDatasetId,
-        experimentalMetricKey: existing.experimentalMetricKey,
-      })
-      fingerprint = buildComparisonFingerprint({
-        predictionUpdatedAt: preview.prediction.updatedAt,
-        predictionId: preview.prediction.id,
-        predictionPoints: preview.prediction.resultPoints,
-        labDatasetUpdatedAt: preview.dataset.updatedAt,
-        labDatasetId: preview.dataset.id,
-        replicates: preview.replicates,
-      })
-    }
+  if (input.researcherNotes !== undefined) {
+    fields.push("researcher_notes = ?")
+    params.push(input.researcherNotes ?? null)
+  }
+  if (input.concordanceFlag !== undefined) {
+    fields.push("concordance_flag = ?")
+    params.push(input.concordanceFlag)
+  }
+  if (input.notes !== undefined) {
+    fields.push("notes = ?")
+    params.push(input.notes ?? null)
+  }
+  if (input.statisticsAnalysisId !== undefined) {
+    fields.push("statistics_analysis_id = ?")
+    params.push(input.statisticsAnalysisId ?? null)
   }
 
-  const next = ComparisonRecordSchema.parse({
-    ...existing,
-    researcherNotes:
-      patch.researcherNotes !== undefined ? patch.researcherNotes : existing.researcherNotes,
-    concordanceFlag: patch.concordanceFlag ?? existing.concordanceFlag,
-    notes: patch.notes !== undefined ? patch.notes : existing.notes,
-    statisticsAnalysisId: nextStatsId,
-    statisticsFreshnessAtSave: nextStatsFreshness,
-    sourceStatisticsUpdatedAt: nextStatsUpdatedAt,
-    sourceFingerprint: fingerprint,
-    updatedAt: now,
-    updatedBy: actor.id,
-  })
-
-  await updateDocData(
-    studySub(studyId, STUDY_SUBCOLLECTIONS.comparisons),
-    id,
-    stripUndefined({
-      researcherNotes: next.researcherNotes,
-      concordanceFlag: next.concordanceFlag,
-      notes: next.notes,
-      statisticsAnalysisId: next.statisticsAnalysisId,
-      statisticsFreshnessAtSave: next.statisticsFreshnessAtSave,
-      sourceStatisticsUpdatedAt: next.sourceStatisticsUpdatedAt,
-      sourceFingerprint: next.sourceFingerprint,
-      updatedAt: next.updatedAt,
-      updatedBy: next.updatedBy,
-    })
-  )
+  params.push(studyId, id)
+  await execute(`UPDATE comparisons SET ${fields.join(", ")} WHERE study_id = ? AND id = ?`, params)
 
   await writeAuditLog({
     studyId,
@@ -330,90 +342,54 @@ export async function updateComparison(
     entityId: id,
   })
 
-  return { ...next, freshness: await evaluateComparisonFreshness(studyId, next) }
+  const updated = await getComparison(studyId, id)
+  if (!updated) throw new Error("Comparison update failed")
+  return updated
 }
 
-export async function listComparisons(studyId: string): Promise<ComparisonRecord[]> {
-  const rows = await listDocs<ComparisonRecord>(studySub(studyId, STUDY_SUBCOLLECTIONS.comparisons))
-  const parsed = rows.map((r) =>
-    ComparisonRecordSchema.parse({
-      ...r,
-      endpoint: r.endpoint ?? r.assay,
-      assay: r.endpoint ?? r.assay,
-      predictionEvidenceClass: r.predictionEvidenceClass ?? "PREDICTED",
-      experimentalMetricKey: r.experimentalMetricKey || "unknown",
-      compatibilityStatus: r.compatibilityStatus ?? "PARTIAL",
-      compatibilityReasons: r.compatibilityReasons ?? [],
-      comparisonMode: r.comparisonMode ?? "SIDE_BY_SIDE",
-      alignedPoints: r.alignedPoints ?? [],
-      sourcePredictionUpdatedAt: r.sourcePredictionUpdatedAt || r.updatedAt,
-      sourceLabUpdatedAt: r.sourceLabUpdatedAt || r.updatedAt,
-      sourceFingerprint: r.sourceFingerprint || `legacy:${r.id}`,
-      predictionRunId: r.predictionRunId || "missing",
-      labDatasetId: r.labDatasetId || "missing",
-      metrics: r.metrics ?? {},
-    })
-  )
-
-  const withFresh = await Promise.all(
-    parsed.map(async (r) => ({
-      ...r,
-      freshness: await evaluateComparisonFreshness(studyId, r),
-    }))
-  )
-  return withFresh.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-}
-
-export async function getComparison(
-  studyId: string,
-  id: string
-): Promise<ComparisonRecord | null> {
-  const raw = await getDocData<ComparisonRecord>(
-    studySub(studyId, STUDY_SUBCOLLECTIONS.comparisons),
-    id
-  )
-  if (!raw) return null
-  const record = ComparisonRecordSchema.parse({
-    ...raw,
-    endpoint: raw.endpoint ?? raw.assay,
-    assay: raw.endpoint ?? raw.assay,
-    predictionEvidenceClass: raw.predictionEvidenceClass ?? "PREDICTED",
-    experimentalMetricKey: raw.experimentalMetricKey || "unknown",
-    compatibilityStatus: raw.compatibilityStatus ?? "PARTIAL",
-    compatibilityReasons: raw.compatibilityReasons ?? [],
-    comparisonMode: raw.comparisonMode ?? "SIDE_BY_SIDE",
-    alignedPoints: raw.alignedPoints ?? [],
-    sourcePredictionUpdatedAt: raw.sourcePredictionUpdatedAt || raw.updatedAt,
-    sourceLabUpdatedAt: raw.sourceLabUpdatedAt || raw.updatedAt,
-    sourceFingerprint: raw.sourceFingerprint || `legacy:${raw.id}`,
-    predictionRunId: raw.predictionRunId || "missing",
-    labDatasetId: raw.labDatasetId || "missing",
-    metrics: raw.metrics ?? {},
-  })
-  return {
-    ...record,
-    freshness: await evaluateComparisonFreshness(studyId, record),
-  }
-}
-
-export async function deleteComparison(
-  studyId: string,
-  id: string,
-  actor: Actor
-): Promise<void> {
-  const existing = await getComparison(studyId, id)
-  if (!existing) throw new Error("Comparison not found.")
-  await deleteDocData(studySub(studyId, STUDY_SUBCOLLECTIONS.comparisons), id)
+export async function deleteComparison(studyId: string, id: string, actor: Actor): Promise<void> {
+  await execute(`DELETE FROM comparisons WHERE study_id = ? AND id = ?`, [studyId, id])
   await writeAuditLog({
     studyId,
     actorId: actor.id,
     action: "comparison.delete",
     entityType: "comparison",
     entityId: id,
-    meta: {
-      endpoint: existing.endpoint,
-      predictionRunId: existing.predictionRunId,
-      labDatasetId: existing.labDatasetId,
-    },
   })
+}
+
+export async function evaluateComparisonFreshness(
+  record: ComparisonRecord
+): Promise<"CURRENT" | "STALE"> {
+  const [predictionRun, labDataset, statsAnalysis] = await Promise.all([
+    getPredictionRun(record.studyId, record.predictionRunId),
+    getLabDataset(record.studyId, record.labDatasetId),
+    record.statisticsAnalysisId
+      ? getStatisticsAnalysis(record.studyId, record.statisticsAnalysisId)
+      : Promise.resolve(null),
+  ])
+
+  if (!predictionRun || !labDataset) return "STALE"
+  if (record.statisticsAnalysisId && !statsAnalysis) return "STALE"
+
+  if (predictionRun.updatedAt !== record.sourcePredictionUpdatedAt) return "STALE"
+  if (labDataset.updatedAt !== record.sourceLabUpdatedAt) return "STALE"
+  if (record.sourceStatisticsUpdatedAt && statsAnalysis?.updatedAt !== record.sourceStatisticsUpdatedAt) {
+    return "STALE"
+  }
+
+  const replicates = await listLabReplicates(record.studyId, record.labDatasetId)
+  const currentFingerprint = buildComparisonFingerprint({
+    predictionUpdatedAt: predictionRun.updatedAt,
+    predictionId: predictionRun.id,
+    predictionPoints: predictionRun.resultPoints,
+    labDatasetUpdatedAt: labDataset.updatedAt,
+    labDatasetId: labDataset.id,
+    replicates,
+    statisticsId: statsAnalysis?.id,
+    statisticsUpdatedAt: statsAnalysis?.updatedAt,
+    statisticsFingerprint: statsAnalysis?.sourceFingerprint,
+  })
+
+  return currentFingerprint === record.sourceFingerprint ? "CURRENT" : "STALE"
 }

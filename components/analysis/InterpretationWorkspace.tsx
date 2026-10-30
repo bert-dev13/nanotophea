@@ -1,30 +1,26 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import {
   AlertTriangle,
-  BookOpen,
   ChevronDown,
   Link2,
   Plus,
   Save,
   Trash2,
-  X,
 } from "lucide-react"
-import { ModuleShell } from "@/components/ui/ModuleShell"
+import { AnalysisEvidenceSummary } from "@/components/analysis/AnalysisEvidenceSummary"
 import { EvidenceBadge } from "@/components/ui/EvidenceBadge"
 import { useAuth } from "@/components/providers/AuthProvider"
 import { useStudy } from "@/components/providers/StudyProvider"
 import {
   canEditInterpretations,
-  interpretationRoleLabel,
 } from "@/lib/permissions/researchAccess"
 import { toUserFacingError } from "@/lib/errors/userFacing"
 import { ResearchEmptyState } from "@/components/research/ResearchEmptyState"
 import { ConfirmDeleteDialog } from "@/components/research/ConfirmDeleteDialog"
 import {
   FormField,
-  inputClass,
   inputStyle,
   textareaClass,
 } from "@/components/research/FormFields"
@@ -40,7 +36,6 @@ import type {
   EvidenceCatalogItem,
   EvidenceGroup,
 } from "@/lib/interpretation/evidenceCatalog"
-import { CONTRACT_INTERPRETATION_PRESETS } from "@/lib/interpretation/presets"
 import type {
   HypothesisAssessment,
   Interpretation,
@@ -131,11 +126,6 @@ export function InterpretationWorkspace() {
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [freshness, setFreshness] = useState<"CURRENT" | "STALE" | undefined>()
 
-  const selected = useMemo(
-    () => saved.find((s) => s.id === selectedId) ?? null,
-    [saved, selectedId]
-  )
-
   const refresh = useCallback(async () => {
     if (!activeStudy) return
     const [lib, rows] = await Promise.all([
@@ -169,24 +159,6 @@ export function InterpretationWorkspace() {
     setForm((prev) => ({ ...prev, [key]: value }))
   }
 
-  const applyPreset = (presetId: string) => {
-    const preset = CONTRACT_INTERPRETATION_PRESETS.find((p) => p.id === presetId)
-    setField("researchQuestionPresetId", presetId)
-    if (!preset) return
-    // Fill only empty fields — never silently overwrite researcher wording
-    setForm((prev) => ({
-      ...prev,
-      researchQuestionPresetId: presetId,
-      researchQuestion: prev.researchQuestion.trim()
-        ? prev.researchQuestion
-        : preset.researchQuestion,
-      researchObjective: prev.researchObjective.trim()
-        ? prev.researchObjective
-        : preset.researchObjective,
-      hypothesisText: prev.hypothesisText.trim() ? prev.hypothesisText : preset.hypothesisText,
-    }))
-  }
-
   const linkEvidence = (item: EvidenceCatalogItem) => {
     if (!canEdit) return
     setForm((prev) => {
@@ -205,15 +177,6 @@ export function InterpretationWorkspace() {
     })
   }
 
-  const unlinkEvidence = (sourceType: string, sourceId: string) => {
-    setForm((prev) => ({
-      ...prev,
-      linkedEvidence: prev.linkedEvidence.filter(
-        (l) => !(l.sourceType === sourceType && l.sourceId === sourceId)
-      ),
-    }))
-  }
-
   const onNew = () => {
     setSelectedId(null)
     setForm(blankForm())
@@ -230,15 +193,12 @@ export function InterpretationWorkspace() {
 
   const onSave = async () => {
     if (!activeStudy || !user || !canEdit) return
-    if (!form.title.trim()) {
-      setError("Title is required.")
-      return
-    }
+    const title = form.title.trim() || "Research interpretation"
     setBusy(true)
     setError(null)
     try {
       const payload = {
-        title: form.title.trim(),
+        title,
         researchQuestion: form.researchQuestion,
         researchObjective: form.researchObjective,
         hypothesisText: form.hypothesisText,
@@ -300,21 +260,19 @@ export function InterpretationWorkspace() {
   }
 
   return (
-    <ModuleShell
-      icon={BookOpen}
-      title="Researcher Interpretation"
-      subtitle="Human-authored scientific interpretation linked to evidence IDs — never auto-generated conclusions."
-      evidence="INTERPRETATION"
-      phase="analysis"
-      contractNote="Hypothesis assessment is researcher-controlled. Computational evidence remains computational. Do not auto-claim efficacy, clinical benefit, or experimental validation."
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs" style={{ color: "#64748b" }}>
-        <span>{interpretationRoleLabel(membership?.role)}</span>
-        <span className="font-mono uppercase tracking-wide">
-          Status: {form.status}
-          {freshness ? ` · ${freshness}` : ""}
-        </span>
-      </div>
+    <>
+      <header className="phyto-hero">
+        <div>
+          <p className="phyto-kicker">03 · Research Interpretation</p>
+          <h2>Evidence synthesis</h2>
+          <p className="phyto-subtitle">
+            The platform lists what was recorded. The interpretation, relationship, limitations,
+            and conclusion are written by the researcher.
+          </p>
+        </div>
+        <EvidenceBadge type="INTERPRETATION" />
+      </header>
+      <AnalysisEvidenceSummary />
 
       {error ? (
         <div
@@ -490,167 +448,38 @@ export function InterpretationWorkspace() {
 
         {/* Workspace */}
         <div className="space-y-4 min-w-0">
-          <section className="rounded-xl border p-4 space-y-3" style={{ background: "#fff", borderColor: "#dde5ef" }}>
-            <FormField label="Title" required>
-              <input
-                className={inputClass}
-                style={inputStyle}
-                value={form.title}
-                disabled={!canEdit}
-                onChange={(e) => setField("title", e.target.value)}
-                placeholder="Interpretation title"
-              />
-            </FormField>
-
-            {canEdit ? (
-              <FormField label="Contract preset (optional — fills empty fields only)">
-                <select
-                  className={inputClass}
-                  style={inputStyle}
-                  value={form.researchQuestionPresetId}
-                  onChange={(e) => applyPreset(e.target.value)}
-                >
-                  <option value="">Manual entry</option>
-                  {CONTRACT_INTERPRETATION_PRESETS.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.id.replace("contract-", "").replace(/-/g, " ")} — {p.source}
-                    </option>
-                  ))}
-                </select>
-              </FormField>
-            ) : null}
-
-            <FormField label="Research question">
-              <textarea
-                className={textareaClass}
-                style={inputStyle}
-                value={form.researchQuestion}
-                disabled={!canEdit}
-                onChange={(e) => setField("researchQuestion", e.target.value)}
-              />
-            </FormField>
-            <FormField label="Research objective">
-              <textarea
-                className={textareaClass}
-                style={inputStyle}
-                value={form.researchObjective}
-                disabled={!canEdit}
-                onChange={(e) => setField("researchObjective", e.target.value)}
-              />
-            </FormField>
-            <FormField label="Hypothesis">
-              <textarea
-                className={textareaClass}
-                style={inputStyle}
-                value={form.hypothesisText}
-                disabled={!canEdit}
-                onChange={(e) => setField("hypothesisText", e.target.value)}
-              />
-            </FormField>
-          </section>
-
-          <section className="rounded-xl border p-4 space-y-3" style={{ background: "#fff", borderColor: "#dde5ef" }}>
-            <h3 className="text-sm font-bold" style={{ color: "#0d1f3c" }}>
-              Evidence overview
-            </h3>
-            {resolvedLinks.length === 0 ? (
-              <p className="text-xs" style={{ color: "#94a3b8" }}>
-                Link evidence from the library. Factual snippets may display stored values; narratives
-                remain researcher-authored.
-              </p>
-            ) : (
-              <ul className="space-y-2">
-                {resolvedLinks.map((item) => (
-                  <li
-                    key={`${item.sourceType}-${item.sourceId}`}
-                    className="rounded-lg border px-3 py-2 text-xs"
-                    style={{
-                      borderColor: item.missing ? "#fecaca" : "#e2e8f0",
-                      background: item.missing ? "#fef2f2" : "#f8fafc",
-                    }}
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-semibold" style={{ color: "#0d1f3c" }}>
-                        {item.label}
-                      </span>
-                      <EvidenceBadge type={item.evidenceClass as EvidenceType} />
-                      {item.missing ? (
-                        <span className="font-mono font-bold" style={{ color: "#b91c1c" }}>
-                          SOURCE MISSING
-                        </span>
-                      ) : null}
-                      {item.freshness === "STALE" ? (
-                        <span className="font-mono" style={{ color: "#b45309" }}>
-                          STALE
-                        </span>
-                      ) : null}
-                      {canEdit ? (
-                        <button
-                          type="button"
-                          className="ml-auto"
-                          style={{ color: "#94a3b8" }}
-                          onClick={() => unlinkEvidence(item.sourceType, item.sourceId)}
-                          aria-label="Unlink evidence"
-                        >
-                          <X size={14} />
-                        </button>
-                      ) : null}
-                    </div>
-                    <p className="mt-1" style={{ color: "#64748b" }}>
-                      {item.moduleLabel}
-                      {item.methodOrSource ? ` · ${item.methodOrSource}` : ""}
-                      {item.factualSnippet ? ` · ${item.factualSnippet}` : ""}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-              <SummaryField
-                label="Computational summary"
-                badge="PREDICTED"
-                value={form.computationalSummary}
-                disabled={!canEdit}
-                onChange={(v) => setField("computationalSummary", v)}
-              />
-              <SummaryField
-                label="Experimental summary"
-                badge="EXPERIMENTAL"
-                value={form.experimentalSummary}
-                disabled={!canEdit}
-                onChange={(v) => setField("experimentalSummary", v)}
-              />
-              <SummaryField
-                label="Statistical summary"
-                badge="EXPERIMENTAL"
-                value={form.statisticalSummary}
-                disabled={!canEdit}
-                onChange={(v) => setField("statisticalSummary", v)}
-              />
-              <SummaryField
-                label="Prediction vs Experimental summary"
-                badge="INTERPRETATION"
-                value={form.comparisonSummary}
-                disabled={!canEdit}
-                onChange={(v) => setField("comparisonSummary", v)}
-              />
-            </div>
-          </section>
+          {resolvedLinks.length > 0 ? (
+            <ul className="space-y-2">
+              {resolvedLinks.map((item) => (
+                <li key={`${item.sourceType}-${item.sourceId}`} className="analysis-evidence">
+                  <span>{item.label}</span>
+                  <EvidenceBadge type={item.evidenceClass as EvidenceType} />
+                </li>
+              ))}
+            </ul>
+          ) : null}
 
           <section className="rounded-xl border p-4 space-y-3" style={{ background: "#fff", borderColor: "#dde5ef" }}>
             <h3 className="text-sm font-bold flex items-center gap-2" style={{ color: "#0d1f3c" }}>
               Researcher interpretation
               <EvidenceBadge type="INTERPRETATION" />
             </h3>
-            <FormField label="Interpretation">
+            <FormField label="Overall Interpretation">
               <textarea
                 className={`${textareaClass} min-h-[120px]`}
                 style={inputStyle}
                 value={form.interpretationText}
                 disabled={!canEdit}
                 onChange={(e) => setField("interpretationText", e.target.value)}
-                placeholder="Author the scientific interpretation manually. Do not paste auto-generated efficacy claims."
+              />
+            </FormField>
+            <FormField label="Relationship Between Computational and Experimental Results">
+              <textarea
+                className={textareaClass}
+                style={inputStyle}
+                value={form.comparisonSummary}
+                disabled={!canEdit}
+                onChange={(e) => setField("comparisonSummary", e.target.value)}
               />
             </FormField>
             <FormField label="Limitations">
@@ -673,62 +502,6 @@ export function InterpretationWorkspace() {
             </FormField>
           </section>
 
-          <section className="rounded-xl border p-4 space-y-3" style={{ background: "#fff", borderColor: "#dde5ef" }}>
-            <h3 className="text-sm font-bold" style={{ color: "#0d1f3c" }}>
-              Hypothesis assessment
-            </h3>
-            <p className="text-[11px]" style={{ color: "#64748b" }}>
-              Manual researcher decision only. The platform does not calculate or auto-select this
-              outcome.
-            </p>
-            <FormField label="Assessment">
-              <select
-                className={inputClass}
-                style={inputStyle}
-                value={form.hypothesisAssessment}
-                disabled={!canEdit}
-                onChange={(e) =>
-                  setField("hypothesisAssessment", e.target.value as HypothesisAssessment)
-                }
-              >
-                <option value="not_assessed">Not assessed</option>
-                <option value="supported">Supported</option>
-                <option value="partially_supported">Partially supported</option>
-                <option value="not_supported">Not supported</option>
-              </select>
-            </FormField>
-            <FormField label="Assessment rationale (optional)">
-              <textarea
-                className={textareaClass}
-                style={inputStyle}
-                value={form.assessmentRationale}
-                disabled={!canEdit}
-                onChange={(e) => setField("assessmentRationale", e.target.value)}
-              />
-            </FormField>
-            <FormField label="Status">
-              <select
-                className={inputClass}
-                style={inputStyle}
-                value={form.status}
-                disabled={!canEdit}
-                onChange={(e) => setField("status", e.target.value as InterpretationStatus)}
-              >
-                <option value="draft">Draft</option>
-                <option value="reviewed">Reviewed</option>
-                <option value="final">Final</option>
-              </select>
-            </FormField>
-            {selected?.assessmentSelectedAt ? (
-              <p className="text-[10px] font-mono" style={{ color: "#94a3b8" }}>
-                Assessment set {new Date(selected.assessmentSelectedAt).toLocaleString()}
-                {selected.assessmentSelectedBy
-                  ? ` · by ${selected.assessmentSelectedBy.slice(0, 8)}…`
-                  : ""}
-              </p>
-            ) : null}
-          </section>
-
           {canEdit ? (
             <div className="flex flex-wrap gap-2">
               <button
@@ -738,7 +511,7 @@ export function InterpretationWorkspace() {
                 className="nano-setup-save"
               >
                 <Save size={13} />
-                {selectedId ? "Save changes" : "Create interpretation"}
+                {selectedId ? "Save changes" : "Save interpretation"}
               </button>
             </div>
           ) : null}
@@ -753,39 +526,6 @@ export function InterpretationWorkspace() {
         onConfirm={() => void onDelete()}
         busy={busy}
       />
-    </ModuleShell>
-  )
-}
-
-function SummaryField({
-  label,
-  badge,
-  value,
-  disabled,
-  onChange,
-}: {
-  label: string
-  badge: EvidenceType
-  value: string
-  disabled?: boolean
-  onChange: (v: string) => void
-}) {
-  return (
-    <div>
-      <div className="flex items-center gap-2 mb-1">
-        <span className="text-[10px] font-mono uppercase tracking-wider" style={{ color: "#546e8a" }}>
-          {label}
-        </span>
-        <EvidenceBadge type={badge} />
-      </div>
-      <textarea
-        className={textareaClass}
-        style={inputStyle}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="Researcher-authored summary of linked facts — not an auto-generated conclusion."
-      />
-    </div>
+    </>
   )
 }

@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react"
 import { usePathname } from "next/navigation"
+import { useAuth } from "@/components/providers/AuthProvider"
 import { useStudy } from "@/components/providers/StudyProvider"
 import { toUserFacingError } from "@/lib/errors/userFacing"
 import { loadStudyReadiness } from "@/lib/workflow/loadStudyReadiness"
@@ -26,14 +27,22 @@ const WorkflowStatusContext = createContext<WorkflowStatusValue | null>(null)
 
 export function WorkflowStatusProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname()
-  const { activeStudy } = useStudy()
+  const { user, loading: authLoading } = useAuth()
+  const { activeStudy, loading: studyLoading } = useStudy()
   const studyId = activeStudy?.id ?? null
+  const studyStamp = `${activeStudy?.updatedAt ?? ""}|${activeStudy?.analysisFinalizedAt ?? ""}|${activeStudy?.status ?? ""}`
   const studyIdRef = useRef(studyId)
   studyIdRef.current = studyId
   const [readiness, setReadiness] = useState<StudyReadiness | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
+    if (authLoading || studyLoading) return null
+    if (!user) {
+      setReadiness(null)
+      setError(null)
+      return null
+    }
     const requested = studyIdRef.current
     if (!requested) {
       setReadiness(null)
@@ -51,7 +60,7 @@ export function WorkflowStatusProvider({ children }: { children: ReactNode }) {
       setError(toUserFacingError(e, "Could not check required records."))
       return null
     }
-  }, [])
+  }, [authLoading, studyLoading, user])
 
   useEffect(() => {
     setReadiness(null)
@@ -59,8 +68,10 @@ export function WorkflowStatusProvider({ children }: { children: ReactNode }) {
   }, [studyId])
 
   useEffect(() => {
-    void refresh()
-  }, [refresh, pathname])
+    if (!authLoading && !studyLoading && user && studyId) {
+      void refresh()
+    }
+  }, [refresh, studyId, authLoading, studyLoading, user, studyStamp])
 
   const value = useMemo(
     () => ({ readiness, error, refresh }),

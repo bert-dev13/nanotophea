@@ -87,6 +87,7 @@ const STATUS_META: Record<
   draft: { label: "Draft", color: "#475569", bg: "#f1f5f9", border: "#cbd5e1" },
   active: { label: "Active", color: "#0f766e", bg: "#ccfbf1", border: "#5eead4" },
   analysis: { label: "Analysis", color: "#c2410c", bg: "#ffedd5", border: "#fdba74" },
+  completed: { label: "Completed", color: "#166534", bg: "#dcfce7", border: "#86efac" },
   archived: { label: "Archived", color: "#64748b", bg: "#f8fafc", border: "#e2e8f0" },
 }
 
@@ -94,6 +95,8 @@ function primaryAction(status?: StudyStatus): { label: string; href: string } {
   switch (status) {
     case "analysis":
       return { label: "Open Analysis", href: "/analysis/compare" }
+    case "completed":
+      return { label: "View analysis", href: "/analysis/statistics" }
     case "archived":
       return { label: "View Interpretation", href: "/analysis/interpretation" }
     case "active":
@@ -138,7 +141,7 @@ export default function DashboardPanel() {
                 ) : null}
               </div>
 
-              <h1 className="mt-3 max-w-2xl font-[family-name:var(--font-display)] text-[1.65rem] sm:text-3xl font-semibold tracking-[-0.03em] text-slate-900 leading-[1.15]">
+              <h1 className="mt-3 max-w-4xl font-[family-name:var(--font-display)] text-[1.65rem] sm:text-3xl font-semibold tracking-[-0.03em] text-slate-900 leading-[1.15]">
                 {loading ? "Loading study…" : activeStudy?.title ?? "No study selected"}
               </h1>
 
@@ -161,7 +164,7 @@ export default function DashboardPanel() {
               </div>
 
               {activeStudy?.formulationSummary ? (
-                <p className="mt-4 max-w-xl text-[13px] leading-relaxed text-slate-600">
+                <p className="mt-4 max-w-3xl text-[13px] leading-relaxed text-slate-600">
                   <span className="font-semibold text-slate-800">Formulation</span>
                   {" — "}
                   {activeStudy.formulationSummary}

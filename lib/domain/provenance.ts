@@ -1,14 +1,34 @@
 import { z } from "zod"
 import type { EvidenceType } from "@/types/evidence"
 
-export const EvidenceTypeSchema = z.enum([
+const LEGACY_EVIDENCE_MAP: Record<string, EvidenceType> = {
+  RETRIEVED: "REFERENCE",
+  retrieved: "REFERENCE",
+  reference: "REFERENCE",
+  literature: "LITERATURE",
+  predicted: "PREDICTED",
+  experimental: "EXPERIMENTAL",
+  synthetic: "SYNTHETIC",
+  SYNTHETIC: "SYNTHETIC",
+  interpretation: "INTERPRETATION",
+  simulation: "SIMULATION",
+}
+
+export const EvidenceTypeSchema = z.preprocess((val) => {
+  if (typeof val === "string") {
+    const trimmed = val.trim()
+    if (LEGACY_EVIDENCE_MAP[trimmed]) return LEGACY_EVIDENCE_MAP[trimmed]
+  }
+  return val
+}, z.enum([
   "REFERENCE",
   "LITERATURE",
   "PREDICTED",
   "EXPERIMENTAL",
+  "SYNTHETIC",
   "INTERPRETATION",
   "SIMULATION",
-])
+]))
 
 /** Reserved for future Storage / file artifacts without requiring them now */
 export const ArtifactRefSchema = z.object({
@@ -28,7 +48,7 @@ export type ArtifactRef = z.infer<typeof ArtifactRefSchema>
  * Attachment fields are optional / out of scope for Phase 2 (no Storage).
  */
 export const ProvenanceSchema = z.object({
-  evidenceClass: EvidenceTypeSchema,
+  evidenceClass: EvidenceTypeSchema.default("REFERENCE"),
   source: z.string().optional(),
   methodName: z.string().optional(),
   methodVersion: z.string().optional(),

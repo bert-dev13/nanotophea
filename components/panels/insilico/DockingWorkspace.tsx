@@ -116,17 +116,17 @@ function fromRecord(r: DockingRun): FormState {
     runName: r.runName,
     compoundId: r.compoundId,
     proteinId: r.proteinId,
-    vinaVersion: r.vinaVersion,
+    vinaVersion: r.vinaVersion ?? "",
     receptorPdbId: r.receptorPdbId ?? "",
-    exhaustiveness: String(r.exhaustiveness),
+    exhaustiveness: r.exhaustiveness != null ? String(r.exhaustiveness) : "",
     numModes: r.numModes != null ? String(r.numModes) : "",
     energyRange: r.energyRange != null ? String(r.energyRange) : "",
-    centerX: String(r.searchBox.centerX),
-    centerY: String(r.searchBox.centerY),
-    centerZ: String(r.searchBox.centerZ),
-    sizeX: String(r.searchBox.sizeX),
-    sizeY: String(r.searchBox.sizeY),
-    sizeZ: String(r.searchBox.sizeZ),
+    centerX: r.searchBox ? String(r.searchBox.centerX) : "",
+    centerY: r.searchBox ? String(r.searchBox.centerY) : "",
+    centerZ: r.searchBox ? String(r.searchBox.centerZ) : "",
+    sizeX: r.searchBox ? String(r.searchBox.sizeX) : "",
+    sizeY: r.searchBox ? String(r.searchBox.sizeY) : "",
+    sizeZ: r.searchBox ? String(r.searchBox.sizeZ) : "",
     modes: r.modes.map((m) => ({
       mode: String(m.mode),
       affinityKcalMol: String(m.affinityKcalMol),
@@ -448,14 +448,14 @@ export default function DockingWorkspace() {
       {!loading && compounds.length === 0 && (
         <ResearchEmptyState
           title="No ligands in this study"
-          body="Add phytochemicals under Research Data before recording docking runs."
+          body="Select phytochemicals in Research Setup. Docking uses only those compounds."
           canEdit={false}
         />
       )}
       {!loading && proteins.length === 0 && compounds.length > 0 && (
         <ResearchEmptyState
           title="No target proteins in this study"
-          body="Add proteins under Research Data before recording docking runs."
+          body="Select target proteins in Research Setup. Each run is one selected compound paired with one selected protein."
           canEdit={false}
         />
       )}
@@ -463,7 +463,7 @@ export default function DockingWorkspace() {
       {!loading && compounds.length > 0 && proteins.length > 0 && filtered.length === 0 && mode === "view" ? (
         <ResearchEmptyState
           title="No docking runs yet"
-          body="Record an external AutoDock Vina result: select ligand and protein, enter Vina parameters and mode affinities from the Vina log."
+          body="Pairs come from the phytochemicals and proteins selected for this study. Record an external AutoDock Vina result for one pair. Affinities are PREDICTED and are not experimental proof."
           canEdit={canEdit}
           actionLabel="New docking run"
           onAction={startCreate}
@@ -986,8 +986,8 @@ export default function DockingWorkspace() {
                         </>
                       }
                     />
-                    <MetaField label="Vina version" value={selected.vinaVersion} />
-                    <MetaField label="Exhaustiveness" value={selected.exhaustiveness} />
+                    <MetaField label="Vina version" value={selected.vinaVersion ?? "—"} />
+                    <MetaField label="Exhaustiveness" value={selected.exhaustiveness ?? "—"} />
                     <MetaField label="num_modes" value={selected.numModes} />
                     <MetaField label="energy_range" value={selected.energyRange} />
                   </FieldGrid>
@@ -997,9 +997,9 @@ export default function DockingWorkspace() {
                       Search box (Å)
                     </p>
                     <p className="text-xs font-mono" style={{ color: "#1a3558" }}>
-                      center ({selected.searchBox.centerX}, {selected.searchBox.centerY},{" "}
-                      {selected.searchBox.centerZ}) · size ({selected.searchBox.sizeX},{" "}
-                      {selected.searchBox.sizeY}, {selected.searchBox.sizeZ})
+                      {selected.searchBox
+                        ? `center (${selected.searchBox.centerX}, ${selected.searchBox.centerY}, ${selected.searchBox.centerZ}) · size (${selected.searchBox.sizeX}, ${selected.searchBox.sizeY}, ${selected.searchBox.sizeZ})`
+                        : "—"}
                     </p>
                   </div>
 

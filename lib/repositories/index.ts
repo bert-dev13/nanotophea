@@ -1,5 +1,5 @@
 /**
- * Barrel export for repositories — keep pages free of raw Firestore calls.
+ * Barrel export for MySQL repositories.
  */
 export * as userRepository from "@/lib/repositories/userRepository"
 export * as studyRepository from "@/lib/repositories/studyRepository"

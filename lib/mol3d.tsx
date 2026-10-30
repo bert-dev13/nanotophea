@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import Image from "next/image"
 import { ExternalLink } from "lucide-react"
+import { useTheme } from "@/components/theme/ThemeProvider"
 
 // ── HTML builders ──────────────────────────────────────────────────────────────
 // Molecules are loaded into 3Dmol.js running inside a srcdoc iframe.
@@ -13,6 +14,22 @@ import { ExternalLink } from "lucide-react"
 //   JSON-stringified, then embedded directly in the HTML — no CDN calls for data.
 // • 3Dmol.js itself is loaded from the CDN once per iframe context.
 
+function overlayScript(overlay?: {
+  searchBox?: { centerX: number; centerY: number; centerZ: number; sizeX: number; sizeY: number; sizeZ: number }
+  chain?: string
+}): string {
+  const chain = overlay?.chain && /^[A-Za-z0-9]$/.test(overlay.chain) ? overlay.chain : ""
+  const box = overlay?.searchBox
+  const numbers = box ? [box.centerX, box.centerY, box.centerZ, box.sizeX, box.sizeY, box.sizeZ] : []
+  const boxScript = numbers.length === 6 && numbers.every((value) => Number.isFinite(value))
+    ? `viewer.addBox({center:{x:${numbers[0]},y:${numbers[1]},z:${numbers[2]}},dimensions:{w:${numbers[3]},h:${numbers[4]},d:${numbers[5]}},color:'#c2410c',opacity:0.25});`
+    : ""
+  const chainScript = chain
+    ? `viewer.setStyle({chain:'${chain}'},{stick:{radius:0.18,colorscheme:'greenCarbon'}});`
+    : ""
+  return `${chainScript}${boxScript}`
+}
+
 function buildMolHTML(
   modelData: string,
   fmt: "sdf" | "pdb",
@@ -20,6 +37,10 @@ function buildMolHTML(
   style: "ballstick" | "cartoon" | "surface",
   spinSpeed: number,
   accentColor: string,
+  overlay?: {
+    searchBox?: { centerX: number; centerY: number; centerZ: number; sizeX: number; sizeY: number; sizeZ: number }
+    chain?: string
+  },
 ): string {
   const styleCmd =
     style === "cartoon"
@@ -60,6 +81,7 @@ function buildMolHTML(
   });
   viewer.addModel(data,'${fmt}');
   ${styleCmd}
+  ${overlayScript(overlay)}
   viewer.zoomTo();
   viewer.spin('y',${spinSpeed});
   viewer.render();
@@ -72,21 +94,32 @@ function buildMolHTML(
 
 // ── Data fetchers ──────────────────────────────────────────────────────────────
 
-async function fetchSDF(cid: number): Promise<string> {
-  const url = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/CID/${cid}/SDF?record_type=3d`
-  const r = await fetch(url)
-  if (!r.ok) throw new Error(`PubChem ${r.status}`)
-  return r.text()
+async function fetchSDF(cid: number): Promise<{ sdf: string; conformer: "3d" | "2d" }> {
+  const r = await fetch(`/api/scientific/pubchem/${cid}/structure`)
+  if (!r.ok) throw new Error("unavailable")
+  const body = (await r.json()) as { sdf?: string; conformer?: string }
+  if (!body.sdf) throw new Error("unavailable")
+  return { sdf: body.sdf, conformer: body.conformer === "2d" ? "2d" : "3d" }
 }
 
 async function fetchPDB(pdbId: string): Promise<string> {
-  const url = `https://files.rcsb.org/download/${pdbId.toUpperCase()}.pdb`
-  const r = await fetch(url)
-  if (!r.ok) throw new Error(`RCSB ${r.status}`)
-  return r.text()
+  const r = await fetch(`/api/scientific/rcsb/${encodeURIComponent(pdbId)}/structure`)
+  if (!r.ok) throw new Error("unavailable")
+  const pdb = await r.text()
+  if (!pdb.includes("ATOM") && !pdb.includes("HETATM")) throw new Error("unavailable")
+  return pdb
 }
 
 // ── Fallback static image (PubChem PNG) ───────────────────────────────────────
+
+function StructureUnavailable({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
+      <p className="text-xs" style={{ color: "#3d5166" }}>Scientific data temporarily unavailable.</p>
+      <button type="button" className="phyto-retry" onClick={onRetry}>Retry</button>
+    </div>
+  )
+}
 
 function PubChemImage({ cid, height, name }: { cid: number; height: number; name: string }) {
   const [loaded, setLoaded] = useState(false)
@@ -100,8 +133,8 @@ function PubChemImage({ cid, height, name }: { cid: number; height: number; name
         </div>
       )}
       <Image
-        src={`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/CID/${cid}/PNG?record_type=3d&image_size=${height}x${height}`}
-        alt={`${name} 3D`}
+        src={`/api/scientific/pubchem/${cid}/image`}
+        alt={`${name} 2D structure`}
         width={height}
         height={height}
         unoptimized
@@ -146,53 +179,71 @@ export function CompoundViewer3D({
   name,
   height = 320,
   color = "#00d4aa",
+  quiet = false,
 }: {
   cid: number
   name: string
   height?: number
   color?: string
+  /** Research-setup viewer: no spin, no live badge. */
+  quiet?: boolean
 }) {
   const [mode, setMode] = useState<"3d" | "2d">("3d")
+  const [conformer, setConformer] = useState<"3d" | "2d" | null>(null)
   const [srcdoc, setSrcdoc] = useState<string | null>(null)
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading")
+  const [viewKey, setViewKey] = useState(0)
 
   useEffect(() => {
     let cancelled = false
     setStatus("loading")
     setSrcdoc(null)
+    setConformer(null)
     fetchSDF(cid)
-      .then(sdf => {
+      .then((result) => {
         if (cancelled) return
-        const html = buildMolHTML(sdf, "sdf", "#f0faf7", "ballstick", 1, color)
+        setConformer(result.conformer)
+        if (result.conformer === "2d") setMode("2d")
+        const html = buildMolHTML(result.sdf, "sdf", "#070d18", "ballstick", quiet ? 0 : 1, color)
         setSrcdoc(html)
         setStatus("ready")
       })
       .catch(() => { if (!cancelled) setStatus("error") })
     return () => { cancelled = true }
-  }, [cid, color])
+  }, [cid, color, quiet, viewKey])
 
   const bodyH = height - 40
 
   return (
-    <div className="relative rounded-2xl overflow-hidden border flex flex-col"
-      style={{ height, borderColor: "#dde5ef", background: "#f0faf7" }}>
+    <div className={`relative overflow-hidden border flex flex-col ${quiet ? "rounded-md" : "rounded-2xl"}`}
+      style={{ height, borderColor: "rgba(255, 255, 255, 0.08)", background: "#070d18" }}>
 
       {/* Toolbar */}
       <div className="flex items-center justify-between px-3 py-2 border-b shrink-0"
-        style={{ borderColor: "#dde5ef", background: "#ffffffdd" }}>
+        style={{ borderColor: "rgba(255, 255, 255, 0.08)", background: "rgba(11, 20, 34, 0.85)" }}>
         <div className="flex items-center gap-1.5">
           {(["3d", "2d"] as const).map(m => (
             <button key={m} onClick={() => setMode(m)}
               className="text-[11px] font-bold px-2.5 py-1 rounded-lg border uppercase tracking-wide transition-all"
               style={{
-                borderColor: mode === m ? color : "#dde5ef",
-                color: mode === m ? color : "#546e8a",
-                background: mode === m ? color + "1a" : "transparent",
+                borderColor: mode === m ? "#2dd4bf" : "rgba(255, 255, 255, 0.1)",
+                color: mode === m ? "#5eead4" : "#94a3b8",
+                background: mode === m ? "rgba(45, 212, 191, 0.15)" : "transparent",
               }}>
               {m}
             </button>
           ))}
-          {mode === "3d" && status === "ready" && (
+          {quiet && mode === "3d" && status === "ready" ? (
+            <button
+              type="button"
+              onClick={() => setViewKey((n) => n + 1)}
+              className="text-[11px] font-medium px-2 py-1"
+              style={{ color: "#546e8a" }}
+            >
+              Reset
+            </button>
+          ) : null}
+          {!quiet && mode === "3d" && status === "ready" && (
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full animate-pulse"
               style={{ background: "#00a88215", color: "#00a882", border: "1px solid #00a88235" }}>
               ● Live 3D · Draggable
@@ -212,17 +263,27 @@ export function CompoundViewer3D({
         {mode === "3d" ? (
           <>
             {status === "loading" && (
+              quiet ? (
+                <div className="phyto-skel phyto-skel--stage" aria-hidden>
+                  <i /><i /><i />
+                </div>
+              ) : (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2"
                 style={{ background: "#f0faf7" }}>
                 <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
                   style={{ borderColor: "#dde5ef", borderTopColor: color }} />
                 <span className="text-xs font-mono" style={{ color: "#546e8a" }}>
-                  Fetching 3D model from PubChem…
+                  Loading structure…
                 </span>
               </div>
+              )
             )}
             {status === "error" && (
-              <PubChemImage cid={cid} height={bodyH} name={name} />
+              quiet ? (
+                <StructureUnavailable onRetry={() => setViewKey((n) => n + 1)} />
+              ) : (
+                <PubChemImage cid={cid} height={bodyH} name={name} />
+              )
             )}
             {status === "ready" && srcdoc && (
               <iframe
@@ -242,7 +303,7 @@ export function CompoundViewer3D({
       <div className="absolute bottom-0 left-0 right-0 px-3 py-1 flex justify-between items-center border-t"
         style={{ background: "#f4f7fcee", borderColor: "#dde5ef" }}>
         <span className="text-[10px] font-mono" style={{ color: "#546e8a" }}>
-          PubChem CID {cid} · {mode === "3d" ? "PubChem 3D Conformer · 3Dmol.js" : "2D depiction"}
+          PubChem CID {cid} · {conformer === "2d" ? "2D coordinates" : mode === "3d" ? "3D conformer" : "2D depiction"}
         </span>
         {mode === "3d" && status === "ready" && (
           <span className="text-[10px] font-mono" style={{ color: "#8098b4" }}>
@@ -291,7 +352,7 @@ export function DockingViewer3D({
     setProteinStatus("loading")
     setProteinSrcdoc(null)
     fetchPDB(pdbId)
-      .then(pdb => {
+      .then((pdb) => {
         if (cancelled) return
         const html = buildMolHTML(pdb, "pdb", "#eef4ff", "cartoon", 0.5, proteinColor)
         setProteinSrcdoc(html)
@@ -306,9 +367,9 @@ export function DockingViewer3D({
     setCompoundStatus("loading")
     setCompoundSrcdoc(null)
     fetchSDF(cid)
-      .then(sdf => {
+      .then((result) => {
         if (cancelled) return
-        const html = buildMolHTML(sdf, "sdf", "#f0faf7", "ballstick", 1, compoundColor)
+        const html = buildMolHTML(result.sdf, "sdf", "#f0faf7", "ballstick", 1, compoundColor)
         setCompoundSrcdoc(html)
         setCompoundStatus("ready")
       })
@@ -480,24 +541,37 @@ export function ProteinViewer3D({
   name,
   height = 320,
   color = "#4fc3f7",
+  quiet = false,
+  searchBox,
+  highlightChain,
 }: {
   pdbId: string
   name: string
   height?: number
   color?: string
+  /** Research-setup viewer: no spin, reset control, no docking context. */
+  quiet?: boolean
+  searchBox?: { centerX: number; centerY: number; centerZ: number; sizeX: number; sizeY: number; sizeZ: number } | null
+  highlightChain?: string
 }) {
+  const { theme } = useTheme()
+  const isLight = theme === "light"
+  const molBg = isLight ? "#f8fafc" : "#070d18"
+  const [pdb, setPdb] = useState<string | null>(null)
   const [srcdoc, setSrcdoc] = useState<string | null>(null)
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading")
+  const [viewKey, setViewKey] = useState(0)
+  const boxKey = searchBox
+    ? [searchBox.centerX, searchBox.centerY, searchBox.centerZ, searchBox.sizeX, searchBox.sizeY, searchBox.sizeZ].join(",")
+    : ""
 
   useEffect(() => {
     let cancelled = false
     setStatus("loading")
-    setSrcdoc(null)
+    setPdb(null)
     fetchPDB(pdbId)
-      .then((pdb) => {
-        if (cancelled) return
-        setSrcdoc(buildMolHTML(pdb, "pdb", "#eef4ff", "cartoon", 0.5, color))
-        setStatus("ready")
+      .then((text) => {
+        if (!cancelled) setPdb(text)
       })
       .catch(() => {
         if (!cancelled) setStatus("error")
@@ -505,40 +579,66 @@ export function ProteinViewer3D({
     return () => {
       cancelled = true
     }
-  }, [pdbId, color])
+  }, [pdbId, viewKey])
+
+  useEffect(() => {
+    if (!pdb) return
+    setSrcdoc(buildMolHTML(pdb, "pdb", molBg, "cartoon", quiet ? 0 : 0.5, color, {
+      ...(searchBox ? { searchBox } : {}),
+      ...(highlightChain ? { chain: highlightChain } : {}),
+    }))
+    setStatus("ready")
+  }, [pdb, color, quiet, boxKey, highlightChain, molBg])
 
   return (
     <div
       className="relative rounded-2xl overflow-hidden border flex flex-col"
-      style={{ height, borderColor: "#dde5ef", background: "#eef4ff" }}
+      style={{ height, borderColor: "var(--border)", background: "var(--card)" }}
     >
       <div
         className="flex items-center justify-between px-3 py-2 border-b shrink-0"
-        style={{ borderColor: "#dde5ef", background: "#ffffffdd" }}
+        style={{ borderColor: "var(--border)", background: "var(--surface-secondary)" }}
       >
-        <span className="text-[11px] font-bold" style={{ color }}>
-          {name} · PDB {pdbId}
+        <span className="text-[11px] font-bold" style={{ color: quiet ? (isLight ? "#0f766e" : "#2dd4bf") : color }}>
+          PDB {pdbId}
         </span>
-        <a
-          href={`https://www.rcsb.org/structure/${pdbId}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-[11px] font-medium"
-          style={{ color: "#2196d3" }}
-        >
-          RCSB ↗
-        </a>
+        <span className="flex items-center gap-2">
+          {quiet && status === "ready" ? (
+            <button type="button" className="text-[11px] font-medium" style={{ color: "var(--muted-foreground)" }} onClick={() => setViewKey((n) => n + 1)}>
+              Reset
+            </button>
+          ) : null}
+          <a
+            href={`https://www.rcsb.org/structure/${pdbId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] font-medium"
+            style={{ color: "#0284c7" }}
+          >
+            RCSB PDB ↗
+          </a>
+        </span>
       </div>
       <div className="flex-1 relative">
         {status === "loading" && (
-          <div className="absolute inset-0 flex items-center justify-center text-xs font-mono" style={{ color: "#546e8a" }}>
-            Loading PDB…
-          </div>
+          quiet ? (
+            <div className="phyto-skel phyto-skel--stage" aria-hidden>
+              <i /><i /><i />
+            </div>
+          ) : (
+            <div className="absolute inset-0 flex items-center justify-center text-xs font-mono" style={{ color: "#546e8a" }}>
+              Loading structure…
+            </div>
+          )
         )}
         {status === "error" && (
-          <div className="absolute inset-0 flex items-center justify-center text-xs font-mono" style={{ color: "#b45309" }}>
-            Could not load structure
-          </div>
+          quiet ? (
+            <StructureUnavailable onRetry={() => setViewKey((n) => n + 1)} />
+          ) : (
+            <div className="absolute inset-0 flex items-center justify-center text-xs font-mono" style={{ color: "#b45309" }}>
+              Could not load structure
+            </div>
+          )
         )}
         {status === "ready" && srcdoc && (
           <iframe
@@ -549,6 +649,132 @@ export function ProteinViewer3D({
           />
         )}
       </div>
+    </div>
+  )
+}
+
+function buildPoseHTML(proteinPdb: string | null, ligandPdb: string): string {
+  const proteinJs = JSON.stringify(proteinPdb ?? "")
+  const ligandJs = JSON.stringify(ligandPdb)
+  const hasProtein = proteinPdb ? "true" : "false"
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#070d18;overflow:hidden;font:12px/1 system-ui,sans-serif;color:#e2e8f0}
+  #bar{position:absolute;z-index:2;top:8px;left:8px;display:flex;gap:6px}
+  button{border:1px solid rgba(255,255,255,0.12);background:rgba(15,23,42,0.85);color:#cbd5e1;border-radius:999px;padding:4px 8px;font:inherit;cursor:pointer;backdrop-filter:blur(8px)}
+  button:hover{border-color:rgba(45,212,191,0.4);color:#5eead4;background:rgba(45,212,191,0.15)}
+  button[data-on="false"]{opacity:.45}
+</style>
+<script>window.OffscreenCanvas=undefined;</script>
+<script src="https://3dmol.org/build/3Dmol-min.js"></script>
+</head>
+<body>
+<div id="bar">
+  <button type="button" id="reset">Reset</button>
+  <button type="button" id="zin">Zoom</button>
+  <button type="button" id="prot">Protein</button>
+  <button type="button" id="lig">Ligand</button>
+</div>
+<div id="v" style="width:100vw;height:100vh"></div>
+<script>
+(function(){
+  var protein=${proteinJs};
+  var ligand=${ligandJs};
+  var hasProtein=${hasProtein};
+  var viewer=$3Dmol.createViewer(document.getElementById('v'),{backgroundColor:'#f4f7fb',antialias:true});
+  if (hasProtein) viewer.addModel(protein,'pdb');
+  viewer.addModel(ligand,'pdb');
+  var showP=true, showL=true;
+  function paint(){
+    if (hasProtein) {
+      var receptor=viewer.getModel(0);
+      if (showP) { receptor.show(); viewer.setStyle({model:0},{cartoon:{color:'spectrum'}}); }
+      else receptor.hide();
+    }
+    var ligandModel=viewer.getModel(hasProtein?1:0);
+    if (showL) {
+      ligandModel.show();
+      viewer.setStyle({model:hasProtein?1:0},{stick:{radius:0.15,colorscheme:'Jmol'},sphere:{scale:0.25,colorscheme:'Jmol'}});
+    } else ligandModel.hide();
+    viewer.render();
+  }
+  paint();
+  viewer.zoomTo();
+  viewer.render();
+  document.getElementById('reset').onclick=function(){ viewer.zoomTo(); viewer.render(); };
+  document.getElementById('zin').onclick=function(){ viewer.zoom(1.2, 200); };
+  document.getElementById('prot').onclick=function(){
+    if (!hasProtein) return;
+    showP=!showP;
+    this.setAttribute('data-on', showP?'true':'false');
+    paint();
+  };
+  document.getElementById('lig').onclick=function(){
+    showL=!showL;
+    this.setAttribute('data-on', showL?'true':'false');
+    paint();
+  };
+  if (!hasProtein) document.getElementById('prot').disabled=true;
+})();
+</script>
+</body>
+</html>`
+}
+
+/** Imported docked coordinates only. Does not load a PubChem conformer. */
+export function DockedPoseViewer({
+  poseModel,
+  pdbId,
+  height = 280,
+}: {
+  poseModel: string
+  pdbId?: string
+  height?: number
+}) {
+  const [srcdoc, setSrcdoc] = useState<string | null>(null)
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading")
+  const [proteinMissing, setProteinMissing] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setStatus("loading")
+    setSrcdoc(null)
+    setProteinMissing(false)
+    const load = async () => {
+      let protein: string | null = null
+      if (pdbId) {
+        try {
+          protein = await fetchPDB(pdbId)
+        } catch {
+          protein = null
+        }
+      }
+      if (cancelled) return
+      setProteinMissing(Boolean(pdbId) && !protein)
+      setSrcdoc(buildPoseHTML(protein, poseModel))
+      setStatus("ready")
+    }
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [poseModel, pdbId])
+
+  return (
+    <div>
+      <div className="dock-pose" style={{ height }}>
+        {status === "loading" ? <div className="phyto-skel" /> : null}
+        {status === "ready" && srcdoc ? (
+          <iframe srcDoc={srcdoc} sandbox="allow-scripts" title="Imported docking pose" />
+        ) : null}
+      </div>
+      {proteinMissing ? (
+        <p className="phyto-missing">Protein coordinates could not be loaded. The imported ligand pose is shown.</p>
+      ) : null}
     </div>
   )
 }

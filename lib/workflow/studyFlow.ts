@@ -32,11 +32,9 @@ export const WORKFLOW_STEPS: WorkflowStep[] = [
     label: "Research Setup",
     shortLabel: "Setup",
     tabs: [
-      { id: "formulation", label: "Formulation" },
       { id: "phytochemicals", label: "Phytochemicals" },
       { id: "proteins", label: "Target Proteins" },
-      { id: "cell-line", label: "Cell Line" },
-      { id: "review", label: "Review" },
+      { id: "cell-line", label: "Cell Lines" },
     ],
   },
   {
@@ -65,6 +63,7 @@ export const WORKFLOW_STEPS: WorkflowStep[] = [
     label: "Biological Predictions",
     shortLabel: "Predictions",
     tabs: [
+      { id: "all", label: "All" },
       { id: "dpph", label: "DPPH" },
       { id: "mtt", label: "MTT" },
       { id: "ldh", label: "LDH" },
@@ -80,9 +79,13 @@ export const WORKFLOW_STEPS: WorkflowStep[] = [
     label: "Laboratory Validation",
     shortLabel: "Laboratory",
     tabs: [
-      { id: "dpph", label: "Experimental DPPH" },
-      { id: "ldh", label: "Experimental LDH" },
-      { id: "characterization", label: "Characterization" },
+      { id: "coverage", label: "Prediction Validation" },
+      { id: "dpph", label: "DPPH" },
+      { id: "mtt", label: "MTT" },
+      { id: "ldh", label: "LDH" },
+      { id: "ros", label: "ROS" },
+      { id: "bax", label: "BAX" },
+      { id: "hippo-yap", label: "Hippo–YAP" },
     ],
   },
   {
@@ -92,28 +95,47 @@ export const WORKFLOW_STEPS: WorkflowStep[] = [
     label: "Analysis & Interpretation",
     shortLabel: "Analysis",
     tabs: [
-      { id: "statistics", label: "Statistics" },
-      { id: "comparison", label: "Comparison" },
-      { id: "interpretation", label: "Interpretation" },
+      { id: "overview", label: "Overview" },
+      { id: "statistics", label: "Statistical Analysis" },
+      { id: "comparison", label: "Prediction vs Experimental" },
+      { id: "interpretation", label: "Research Interpretation" },
     ],
   },
 ]
 
 /** Record-backed status. "unknown" means records have not been loaded yet. */
-export type StepRecordStatus = "complete" | "incomplete" | "review" | "unknown"
+export type StepRecordStatus = "complete" | "incomplete" | "in_progress" | "review" | "unknown"
 
 export interface StudyReadiness {
   formulations: number
   compounds: number
+  /** Selected phytochemicals marked reviewed in In-Silico Screening. */
+  screenedCompounds: number
   proteins: number
   cellLines: number
   references: number
   admetRuns: number
   dockingRuns: number
+  /** Ligand–protein pairs in this study that have an imported Vina result. */
+  dockingCompleted: number
+  /** Pairs the researcher skipped because docking could not be performed. */
+  dockingSkipped?: number
+  /** Completed Vina results plus explicit skips. Omitted values fall back to dockingCompleted. */
+  dockingResolved?: number
+  /** Pairs with a curated docking profile. When omitted, every selected pair is required. */
+  dockingExpected?: number
   predictionRuns: number
+  /** Subjects in prediction modules this study has included. */
+  predictionRequired: number
+  /** Included subjects that have a recorded prediction. */
+  predictionRecorded: number
   labDpph: number
   labLdh: number
-  characterization: number
+
+  /** Laboratory sections included in this study. */
+  labRequired: number
+  /** Included sections that have a recorded experimental dataset. */
+  labRecorded: number
   statistics: number
   comparisons: number
   interpretations: number
@@ -121,6 +143,20 @@ export interface StudyReadiness {
   staleStatistics: number
   staleComparisons: number
   staleInterpretations: number
+  predictionDpph: number
+  predictionMtt: number
+  predictionLdh: number
+  predictionRos: number
+  predictionBax: number
+  predictionHippo: number
+  /** Current (not stale) saved comparisons, by assay. */
+  comparisonsDpph: number
+  comparisonsLdh: number
+  /** Interpretations with overall text, relationship, limitations, and conclusion. */
+  interpretationReady: number
+  interpretationFinal: number
+  /** Laboratory results or coverage changed after Step 06 was finalized. */
+  laboratoryChangedAfterAnalysis: boolean
 }
 
 const PROGRESS_PREFIX = "nanotophea.workflowProgress."
@@ -129,21 +165,37 @@ export function emptyReadiness(patch: Partial<StudyReadiness> = {}): StudyReadin
   return {
     formulations: 0,
     compounds: 0,
+    screenedCompounds: 0,
     proteins: 0,
     cellLines: 0,
     references: 0,
     admetRuns: 0,
     dockingRuns: 0,
+    dockingCompleted: 0,
     predictionRuns: 0,
+    predictionRequired: 0,
+    predictionRecorded: 0,
     labDpph: 0,
     labLdh: 0,
-    characterization: 0,
+    labRequired: 2,
+    labRecorded: 0,
     statistics: 0,
     comparisons: 0,
     interpretations: 0,
     staleStatistics: 0,
     staleComparisons: 0,
     staleInterpretations: 0,
+    predictionDpph: 0,
+    predictionMtt: 0,
+    predictionLdh: 0,
+    predictionRos: 0,
+    predictionBax: 0,
+    predictionHippo: 0,
+    comparisonsDpph: 0,
+    comparisonsLdh: 0,
+    interpretationReady: 0,
+    interpretationFinal: 0,
+    laboratoryChangedAfterAnalysis: false,
     ...patch,
   }
 }
@@ -217,17 +269,14 @@ export function resumePath(studyId: string): string {
 export function continueRequirements(stepId: StepId, readiness: StudyReadiness): string[] {
   if (stepId === "setup") {
     const missing: string[] = []
-    if (readiness.formulations < 1) {
-      missing.push("Add a formulation before continuing to In-Silico Screening.")
-    }
     if (readiness.compounds < 1) {
-      missing.push("Add a phytochemical before continuing to In-Silico Screening.")
+      missing.push("Select at least one phytochemical before continuing to In-Silico Screening.")
     }
     if (readiness.proteins < 1) {
-      missing.push("Add a target protein before continuing to In-Silico Screening.")
+      missing.push("Select at least one target protein before continuing to In-Silico Screening.")
     }
     if (readiness.cellLines < 1) {
-      missing.push("Add a cell line before continuing to In-Silico Screening.")
+      missing.push("Select at least one cell line before continuing to In-Silico Screening.")
     }
     return missing
   }
@@ -235,7 +284,9 @@ export function continueRequirements(stepId: StepId, readiness: StudyReadiness):
   if (stepId === "insilico") {
     const missing: string[] = []
     if (readiness.compounds < 1) {
-      missing.push("Select a phytochemical before continuing to Molecular Docking.")
+      missing.push("Select at least one phytochemical before continuing to Molecular Docking.")
+    } else if (readiness.screenedCompounds < readiness.compounds) {
+      missing.push("Complete PubChem, drug-likeness, and ADME screening for each selected phytochemical before continuing to Molecular Docking.")
     }
     if (readiness.proteins < 1) {
       missing.push("Select a target protein before continuing to Molecular Docking.")
@@ -243,48 +294,132 @@ export function continueRequirements(stepId: StepId, readiness: StudyReadiness):
     return missing
   }
 
+  if (stepId === "docking") {
+    const missing: string[] = []
+    if (readiness.compounds < 1) {
+      missing.push("Select at least one phytochemical before continuing to Biological Predictions.")
+    }
+    if (readiness.proteins < 1) {
+      missing.push("Select at least one target protein before continuing to Biological Predictions.")
+    }
+    const expected = requiredDockingPairs(readiness)
+    if (expected > 0 && resolvedDockingPairs(readiness) < expected) {
+      missing.push("Resolve each docking pair before continuing to Biological Predictions. Complete AutoDock Vina, or skip a pair that has no docking profile.")
+    }
+    return missing
+  }
+
+  if (stepId === "predictions") {
+    return []
+  }
+
+  if (stepId === "laboratory") {
+    return []
+  }
+
   return []
+}
+
+/** Cartesian product of the study's selected phytochemicals and target proteins. */
+export function expectedDockingPairs(readiness: StudyReadiness): number {
+  return readiness.compounds * readiness.proteins
+}
+
+/** Pairs that must be resolved before the next step. */
+export function requiredDockingPairs(readiness: StudyReadiness): number {
+  return readiness.dockingExpected ?? expectedDockingPairs(readiness)
+}
+
+/** A completed Vina result or an explicit skip. A missing profile is not resolved. */
+export function resolvedDockingPairs(readiness: StudyReadiness): number {
+  if (readiness.dockingResolved != null) return readiness.dockingResolved
+  return readiness.dockingCompleted + (readiness.dockingSkipped ?? 0)
 }
 
 /**
  * Honest gaps that do not block the next step.
  * Predictions, laboratory entry, and analysis stay reachable without invented results.
  */
-export function continueAdvisory(stepId: StepId, readiness: StudyReadiness): string | null {
-  if (stepId === "docking" && readiness.dockingRuns < 1) {
-    return "No docking run is recorded yet. Biological predictions are a separate computational step."
-  }
-  if (stepId === "predictions" && readiness.predictionRuns < 1) {
-    return "No prediction runs are recorded yet. Laboratory results are entered on their own."
-  }
-  if (stepId === "laboratory" && readiness.labDpph < 1 && readiness.labLdh < 1) {
-    return "No experimental DPPH or LDH dataset is recorded yet. Analysis uses laboratory records only."
-  }
+export function continueAdvisory(_stepId: StepId, _readiness: StudyReadiness): string | null {
   return null
 }
 
 export function stepRequirementsMet(stepId: StepId, readiness: StudyReadiness): boolean {
   switch (stepId) {
     case "setup":
-      return (
-        readiness.formulations > 0 &&
-        readiness.compounds > 0 &&
-        readiness.proteins > 0 &&
-        readiness.cellLines > 0
-      )
+      return readiness.compounds > 0 && readiness.proteins > 0 && readiness.cellLines > 0
     case "insilico":
-      return readiness.admetRuns > 0
+      return readiness.compounds > 0 && readiness.screenedCompounds >= readiness.compounds
     case "docking":
-      return readiness.dockingRuns > 0
+      return requiredDockingPairs(readiness) > 0 && resolvedDockingPairs(readiness) >= requiredDockingPairs(readiness)
     case "predictions":
-      return readiness.predictionRuns > 0
+      return readiness.predictionRequired > 0 && readiness.predictionRecorded >= readiness.predictionRequired
     case "laboratory":
-      return readiness.labDpph + readiness.labLdh + readiness.characterization > 0
+      if (readiness.labRequired === 0) {
+        return readiness.labRecorded === 0 && readiness.labDpph === 0 && readiness.labLdh === 0
+      }
+      return readiness.labRecorded >= readiness.labRequired
     case "analysis":
-      return readiness.statistics + readiness.comparisons + readiness.interpretations > 0
+      return readiness.interpretationFinal > 0
     default:
       return false
   }
+}
+
+export type AnalysisStageId = "statistics" | "comparison" | "interpretation"
+export type AnalysisStageStatus = "not_started" | "in_progress" | "ready" | "completed"
+
+export function analysisStageStatus(
+  stage: AnalysisStageId,
+  readiness: StudyReadiness,
+): AnalysisStageStatus {
+  if (stage === "statistics") {
+    if (readiness.statistics > 0 && readiness.staleStatistics === 0) return "completed"
+    if (readiness.staleStatistics > 0) return "in_progress"
+    if (readiness.labDpph + readiness.labLdh > 0) return "ready"
+    return "not_started"
+  }
+  if (stage === "comparison") {
+    if (readiness.comparisons > 0 && readiness.staleComparisons === 0) return "completed"
+    if (readiness.staleComparisons > 0) return "in_progress"
+    const pairable =
+      (readiness.predictionDpph > 0 && readiness.labDpph > 0) ||
+      (readiness.predictionLdh > 0 && readiness.labLdh > 0)
+    if (pairable) return "ready"
+    return "not_started"
+  }
+  if (readiness.interpretationFinal > 0 && readiness.staleInterpretations === 0) return "completed"
+  if (readiness.interpretations > 0 || readiness.staleInterpretations > 0) return "in_progress"
+  if (readiness.statistics > 0 || readiness.comparisons > 0) return "ready"
+  return "not_started"
+}
+
+export const ANALYSIS_STAGE_STATUS_LABEL: Record<AnalysisStageStatus, string> = {
+  not_started: "Not started",
+  in_progress: "In progress",
+  ready: "Ready",
+  completed: "Completed",
+}
+
+/** What still has to exist before Step 06 can be finalized. */
+export function analysisFinalizeBlockers(readiness: StudyReadiness): string[] {
+  const missing: string[] = []
+  if (readiness.labDpph + readiness.labLdh > 0 && (readiness.statistics === 0 || readiness.staleStatistics > 0)) {
+    missing.push("Complete a current statistical analysis of the experimental datasets.")
+  }
+  if (readiness.predictionDpph > 0 && readiness.labDpph > 0 && readiness.comparisonsDpph === 0) {
+    missing.push("Save the DPPH simulation versus experimental comparison.")
+  }
+  if (readiness.predictionLdh > 0 && readiness.labLdh > 0 && readiness.comparisonsLdh === 0) {
+    missing.push("Save the LDH simulation versus experimental comparison.")
+  }
+  if (readiness.interpretationReady === 0) {
+    missing.push("Write the interpretation, the relationship between computational and experimental results, limitations, and a conclusion.")
+  }
+  if (readiness.staleInterpretations > 0) {
+    missing.push("Review the interpretation after the linked evidence changed.")
+  }
+  return missing
 }
 
 export function analysisNeedsReview(readiness: StudyReadiness): boolean {
@@ -295,15 +430,27 @@ export function analysisNeedsReview(readiness: StudyReadiness): boolean {
 
 /**
  * Sidebar status from stored records only.
- * A step is complete when its records exist. Analysis is "review" when an
- * existing freshness check is STALE. Missing records stay incomplete.
+ * Laboratory completeness does not lock Analysis. A finalized analysis returns
+ * to review when laboratory evidence changes afterward.
  */
 export function stepRecordStatus(
   stepId: StepId,
   readiness: StudyReadiness | null
 ): StepRecordStatus {
   if (!readiness) return "unknown"
-  if (stepId === "analysis" && analysisNeedsReview(readiness)) return "review"
+  if (stepId === "analysis") {
+    if (readiness.interpretationFinal > 0 && readiness.laboratoryChangedAfterAnalysis) return "review"
+    if (analysisNeedsReview(readiness)) {
+      if (readiness.interpretationFinal > 0 && readiness.staleInterpretations === 0) return "complete"
+      return "review"
+    }
+  }
+  if (stepId === "laboratory" && !stepRequirementsMet("laboratory", readiness)) {
+    const started =
+      readiness.labRecorded > 0 ||
+      readiness.labDpph + readiness.labLdh > 0
+    if (started) return "in_progress"
+  }
   return stepRequirementsMet(stepId, readiness) ? "complete" : "incomplete"
 }
 
@@ -311,17 +458,67 @@ export function stepRecordStatus(
 export type StepAvailability = "completed" | "current" | "available" | "locked" | "review"
 
 /**
- * Step 02 and later stay locked until Research Setup has all four required
- * categories. Later steps are not redesigned here; once setup is complete
- * they stay open, and record counts still mark them completed or in review.
+ * Whether the researcher may open this step.
+ * Setup unlocks In-Silico Screening. Docking unlocks after screening, or stays
+ * open once its own pairs are resolved. Predictions unlock only after every
+ * docking pair is completed or skipped. Laboratory waits for predictions, and
+ * Analysis waits for laboratory records. A skipped pair is not a Vina result.
+ */
+export function canEnterStep(stepId: StepId, readiness: StudyReadiness | null): boolean {
+  if (stepId === "setup") return true
+  if (!readiness || !stepRequirementsMet("setup", readiness)) return false
+  if (stepId === "insilico") return true
+  const dockingDone = stepRequirementsMet("docking", readiness)
+  if (stepId === "docking") return dockingDone || stepRequirementsMet("insilico", readiness)
+  if (!dockingDone) return false
+  if (stepId === "predictions") return true
+  if (!stepRequirementsMet("predictions", readiness)) return false
+  if (stepId === "laboratory") return true
+  if (stepId === "analysis") {
+    return (
+      stepRequirementsMet("laboratory", readiness) ||
+      readiness.labRecorded > 0 ||
+      readiness.labDpph > 0 ||
+      readiness.labLdh > 0
+  
+    )
+  }
+  return stepRequirementsMet(stepId, readiness)
+}
+
+/** Why the next step cannot be opened. Empty when it can. */
+export function stepLockedMessage(stepId: StepId, readiness: StudyReadiness): string | null {
+  if (canEnterStep(stepId, readiness)) return null
+  if (!stepRequirementsMet("setup", readiness)) {
+    return "Complete Research Setup before continuing."
+  }
+  if (stepId === "docking" && !stepRequirementsMet("insilico", readiness)) {
+    return "Complete In-Silico Screening before continuing to Molecular Docking."
+  }
+  if (!stepRequirementsMet("docking", readiness)) {
+    return "Resolve every docking pair before continuing."
+  }
+  if (stepId === "laboratory" || stepId === "analysis") {
+    if (!stepRequirementsMet("predictions", readiness)) {
+      return "Complete Biological Predictions before continuing to Laboratory Validation."
+    }
+  }
+  if (stepId === "analysis") {
+    return "Record at least one laboratory result or resolve endpoints before continuing to Analysis & Interpretation."
+  }
+  return "This step is locked."
+}
+
+/**
+ * Sidebar state for one workflow step. Locked and available come from canEnterStep
+ * so the sidebar and the Continue button share one rule.
  */
 export function stepAvailability(
   stepId: StepId,
   readiness: StudyReadiness | null,
   current: boolean
 ): StepAvailability {
-  const setupDone = Boolean(readiness && stepRequirementsMet("setup", readiness))
-  if (stepId !== "setup" && readiness && !setupDone) return "locked"
+  if (readiness && !canEnterStep(stepId, readiness)) return "locked"
   const record = stepRecordStatus(stepId, readiness)
   if (record === "review") return "review"
   if (current) return "current"
@@ -335,16 +532,17 @@ export function stepIdFromPathname(pathname: string, studyId: string): StepId | 
   if (pathname !== prefix && !pathname.startsWith(prefix + "/")) return null
   const rest = pathname.slice(prefix.length).replace(/^\//, "")
   const slug = rest ? rest.split("/").filter(Boolean) : []
+  if (slug[0] === "assistant") return null
   return parseWorkspaceSlug(slug).step.id
 }
 
 /** Old module URLs preserved as bookmarks. The page redirects into the open study. */
 export const LEGACY_MODULE_TARGETS: Record<string, { step: StepId; tab?: string }> = {
-  "/research/formulation": { step: "setup", tab: "formulation" },
+  "/research/formulation": { step: "setup", tab: "phytochemicals" },
   "/research/phytochemicals": { step: "setup", tab: "phytochemicals" },
   "/research/proteins": { step: "setup", tab: "proteins" },
   "/research/cell-lines": { step: "setup", tab: "cell-line" },
-  "/research/references": { step: "setup", tab: "formulation" },
+  "/research/references": { step: "setup", tab: "phytochemicals" },
   "/insilico/admet": { step: "insilico", tab: "admet" },
   "/insilico/docking": { step: "docking" },
   "/insilico/predictions/dpph": { step: "predictions", tab: "dpph" },

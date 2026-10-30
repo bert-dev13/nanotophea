@@ -51,6 +51,8 @@ describe("interpretation fingerprints", () => {
       ]),
       "STALE"
     )
+    assert.equal(evaluateInterpretationFreshness("evidence-version-hash", []), "CURRENT")
+    assert.equal(evaluateInterpretationFreshness(undefined, []), "CURRENT")
   })
 })
 

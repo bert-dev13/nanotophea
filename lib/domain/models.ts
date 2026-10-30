@@ -1,6 +1,33 @@
 import { z } from "zod"
 import { EvidenceTypeSchema, ProvenanceSchema } from "@/lib/domain/provenance"
 
+export const LaboratoryOmissionReasonSchema = z.enum([
+  "study_scope",
+  "cost",
+  "equipment",
+  "capability",
+  "protocol",
+  "other",
+])
+export type LaboratoryOmissionReason = z.infer<typeof LaboratoryOmissionReasonSchema>
+
+export const LaboratoryOmissionSchema = z.object({
+  reason: LaboratoryOmissionReasonSchema,
+  notes: z.string().optional(),
+})
+export type LaboratoryOmission = z.infer<typeof LaboratoryOmissionSchema>
+
+export const LaboratoryOmissionsSchema = z.object({
+  dpph: LaboratoryOmissionSchema.optional(),
+  mtt: LaboratoryOmissionSchema.optional(),
+  ldh: LaboratoryOmissionSchema.optional(),
+  ros: LaboratoryOmissionSchema.optional(),
+  bax: LaboratoryOmissionSchema.optional(),
+  hippo_yap: LaboratoryOmissionSchema.optional(),
+  characterization: LaboratoryOmissionSchema.optional(),
+})
+export type LaboratoryOmissions = z.infer<typeof LaboratoryOmissionsSchema>
+
 export const StudyRoleSchema = z.enum(["OWNER", "COLLABORATOR", "ADVISER", "VIEWER"])
 export type StudyRole = z.infer<typeof StudyRoleSchema>
 
@@ -8,6 +35,7 @@ export const StudyStatusSchema = z.enum([
   "draft",
   "active",
   "analysis",
+  "completed",
   "archived",
 ])
 export type StudyStatus = z.infer<typeof StudyStatusSchema>
@@ -21,6 +49,9 @@ export const UserProfileSchema = z.object({
   updatedAt: z.string(),
   /** Default role hint when invited; study membership is authoritative */
   defaultRole: StudyRoleSchema.default("VIEWER"),
+  role: StudyRoleSchema.optional(),
+  isActive: z.boolean().optional().default(true),
+  lastLoginAt: z.string().optional().nullable(),
 })
 export type UserProfile = z.infer<typeof UserProfileSchema>
 
@@ -34,6 +65,35 @@ export const StudyMemberSchema = z.object({
   addedBy: z.string().min(1),
 })
 export type StudyMember = z.infer<typeof StudyMemberSchema>
+
+export const DockingSearchStrategySchema = z.enum(["known_site", "reference_ligand", "manual", "blind", "binding_site_residues"])
+export type DockingSearchStrategy = z.infer<typeof DockingSearchStrategySchema>
+
+/** Search space approved for one target and PDB. Coordinates are reviewed, never guessed. */
+export const ApprovedDockingConfigurationSchema = z.object({
+  proteinId: z.string().min(1),
+  pdbId: z.string().min(1).optional(),
+  strategy: DockingSearchStrategySchema.optional(),
+  siteLabel: z.string().min(1).optional(),
+  derivation: z.string().min(1).optional(),
+  receptorChains: z.array(z.string()).optional(),
+  referenceChain: z.string().min(1).optional(),
+  referenceEntity: z.string().min(1).optional(),
+  paddingAngstrom: z.number().nonnegative().optional(),
+  calculationMethod: z.string().min(1).optional(),
+  centerX: z.number().finite(),
+  centerY: z.number().finite(),
+  centerZ: z.number().finite(),
+  sizeX: z.number().positive(),
+  sizeY: z.number().positive(),
+  sizeZ: z.number().positive(),
+  exhaustiveness: z.number().int().positive().max(64),
+  numModes: z.number().int().positive().max(20),
+  energyRange: z.number().nonnegative().max(10),
+  approvedAt: z.string().min(1),
+  approvedBy: z.string().min(1),
+})
+export type ApprovedDockingConfiguration = z.infer<typeof ApprovedDockingConfigurationSchema>
 
 export const StudySchema = z.object({
   id: z.string().min(1),
@@ -51,6 +111,42 @@ export const StudySchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   contractVersion: z.string().default("2026-09-29"),
+  /** Which Step 04 modules this study will record. Missing keys use the selection default. */
+  predictionModules: z
+    .object({
+      dpph: z.boolean().optional(),
+      mtt: z.boolean().optional(),
+      ldh: z.boolean().optional(),
+      ros: z.boolean().optional(),
+      bax: z.boolean().optional(),
+      hippo_yap: z.boolean().optional(),
+    })
+    .optional(),
+  /** False means the researcher marked this endpoint not tested. A missing key is not yet recorded. */
+  laboratorySections: z
+    .object({
+      dpph: z.boolean().optional(),
+      mtt: z.boolean().optional(),
+      ldh: z.boolean().optional(),
+      ros: z.boolean().optional(),
+      bax: z.boolean().optional(),
+      hippo_yap: z.boolean().optional(),
+      characterization: z.boolean().optional(),
+    })
+    .optional(),
+  /** Researcher-chosen reason when an endpoint was not experimentally tested. */
+  laboratoryOmissions: LaboratoryOmissionsSchema.optional(),
+  /** Last time laboratory results or coverage decisions changed. */
+  laboratoryEvidenceAt: z.string().optional(),
+  /** Per-target AutoDock Vina search space, stored with the PDB it was approved for. */
+  dockingConfigurations: z.array(ApprovedDockingConfigurationSchema).max(40).optional(),
+  /** Unsupported targets the researcher chose to keep in the study. */
+  dockingReadinessAcknowledgement: z.object({
+    proteinNames: z.array(z.string().min(1)).max(40),
+    acknowledgedAt: z.string().min(1),
+  }).optional(),
+  /** Set when the researcher finalizes Step 06. Does not change evidence classes. */
+  analysisFinalizedAt: z.string().optional(),
 })
 export type Study = z.infer<typeof StudySchema>
 
@@ -68,6 +164,35 @@ export const UpdateStudyInputSchema = CreateStudyInputSchema.partial().extend({
   status: StudyStatusSchema.optional(),
   primaryCellLine: z.string().optional(),
   formulationSummary: z.string().optional(),
+  predictionModules: z
+    .object({
+      dpph: z.boolean().optional(),
+      mtt: z.boolean().optional(),
+      ldh: z.boolean().optional(),
+      ros: z.boolean().optional(),
+      bax: z.boolean().optional(),
+      hippo_yap: z.boolean().optional(),
+    })
+    .optional(),
+  laboratorySections: z
+    .object({
+      dpph: z.boolean().optional(),
+      mtt: z.boolean().optional(),
+      ldh: z.boolean().optional(),
+      ros: z.boolean().optional(),
+      bax: z.boolean().optional(),
+      hippo_yap: z.boolean().optional(),
+      characterization: z.boolean().optional(),
+    })
+    .optional(),
+  laboratoryOmissions: LaboratoryOmissionsSchema.optional(),
+  laboratoryEvidenceAt: z.string().optional(),
+  dockingConfigurations: z.array(ApprovedDockingConfigurationSchema).max(40).optional(),
+  dockingReadinessAcknowledgement: z.object({
+    proteinNames: z.array(z.string().min(1)).max(40),
+    acknowledgedAt: z.string().min(1),
+  }).optional(),
+  analysisFinalizedAt: z.string().optional(),
 })
 export type UpdateStudyInput = z.infer<typeof UpdateStudyInputSchema>
 
@@ -75,7 +200,7 @@ export type UpdateStudyInput = z.infer<typeof UpdateStudyInputSchema>
 export const ScientificRecordBaseSchema = z.object({
   id: z.string().min(1),
   studyId: z.string().min(1),
-  provenance: ProvenanceSchema,
+  provenance: ProvenanceSchema.default({ evidenceClass: "REFERENCE" }),
   createdAt: z.string(),
   updatedAt: z.string(),
   createdBy: z.string().min(1),
@@ -120,17 +245,43 @@ export const CompoundSchema = ScientificRecordBaseSchema.extend({
   source: z.string().optional(),
   isPrimaryMarker: z.boolean().default(false),
   referenceIds: z.array(z.string()).default([]),
+  /** Set when the researcher finishes in-silico screening for this compound. */
+  screeningReviewedAt: z.string().optional(),
 })
 export type Compound = z.infer<typeof CompoundSchema>
 
+export const StructureEntityClaimSchema = z.object({
+  label: z.string().min(1),
+  uniprotId: z.string().min(1).optional(),
+})
+
+/**
+ * Study copy of a reference protein.
+ * verification status is not stored. Docking recomputes it from live RCSB metadata.
+ */
 export const ProteinSchema = ScientificRecordBaseSchema.extend({
   name: z.string().min(1),
   gene: z.string().optional(),
+  geneSymbol: z.string().optional(),
+  proteinName: z.string().optional(),
+  biologicalTarget: z.string().optional(),
   pdbId: z.string().optional(),
   pathway: z.string().optional(),
   role: z.string().optional(),
   functionNotes: z.string().optional(),
   source: z.string().optional(),
+  structureTitle: z.string().optional(),
+  structureProtein: z.string().optional(),
+  structureContext: z.string().optional(),
+  organism: z.string().optional(),
+  chains: z.array(z.string()).optional(),
+  uniprotIds: z.array(z.string()).optional(),
+  expectedTitle: z.string().optional(),
+  expectedMethod: z.string().optional(),
+  expectedResolution: z.string().optional(),
+  expectedEntities: z.array(StructureEntityClaimSchema).optional(),
+  /** Where the structure claim is checked. A stored value does not mean the structure is verified. */
+  verificationSource: z.enum(["RCSB PDB", "AlphaFold DB"]).optional(),
   referenceIds: z.array(z.string()).default([]),
 })
 export type Protein = z.infer<typeof ProteinSchema>
@@ -155,12 +306,24 @@ export const AdmetRunSchema = ScientificRecordBaseSchema.extend({
   compoundName: z.string().optional(),
   toolName: z.string().optional(),
   toolVersion: z.string().optional(),
+  provider: z.string().optional(),
+  providerVersion: z.string().optional(),
+  model: z.string().optional(),
+  normalizerVersion: z.string().optional(),
+  pubchemCid: z.number().int().optional(),
+  inputSmiles: z.string().optional(),
+  generatedAt: z.string().optional(),
+  pubchemRetrieved: z.boolean().optional(),
+  lipinskiOverall: z.enum(["pass", "fail", "incomplete"]).optional(),
   descriptors: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).default({}),
+  raw: z.record(z.string(), z.number()).optional(),
   status: z.enum(["draft", "imported", "final"]).default("draft"),
+  /** calculated: this saved row came from the model. A later page view can still be a cache retrieval. */
+  assessmentOrigin: z.enum(["calculated", "retrieved"]).optional(),
 })
 export type AdmetRun = z.infer<typeof AdmetRunSchema>
 
-/** One AutoDock Vina pose/mode from actual Vina output — never generated */
+/** One AutoDock Vina pose/mode from actual Vina output  -  never generated */
 export const DockingModeSchema = z.object({
   mode: z.number().int().positive(),
   affinityKcalMol: z.number(),
@@ -180,7 +343,7 @@ export const DockingInteractionTypeSchema = z.enum([
 ])
 export type DockingInteractionType = z.infer<typeof DockingInteractionTypeSchema>
 
-/** Manually recorded observed/interpreted interactions — not auto-generated */
+/** Manually recorded observed/interpreted interactions  -  not auto-generated */
 export const DockingInteractionSchema = z.object({
   residue: z.string().min(1),
   interactionType: DockingInteractionTypeSchema,
@@ -200,25 +363,104 @@ export const DockingSearchBoxSchema = z.object({
 export type DockingSearchBox = z.infer<typeof DockingSearchBoxSchema>
 
 /**
- * AutoDock Vina import record (Phase 5).
- * Affinities/modes must come from actual external Vina output — never simulated.
+ * Canonical Docking Pair status.
+ */
+export const DockingPairStatusSchema = z.enum([
+  "PENDING",
+  "RUNNING",
+  "COMPLETED",
+  "FAILED",
+  "SKIPPED",
+  "UNAVAILABLE",
+])
+export type DockingPairStatus = z.infer<typeof DockingPairStatusSchema>
+
+/**
+ * Deterministic document ID for a docking pair within a study.
+ */
+export function canonicalDockingPairDocId(compoundId: string, proteinId: string): string {
+  return `${compoundId}__${proteinId}`
+}
+
+/**
+ * Deterministic global key for a docking pair.
+ */
+export function canonicalDockingPairKey(studyId: string, compoundId: string, proteinId: string): string {
+  return `${studyId}:${compoundId}:${proteinId}`
+}
+
+/**
+ * Canonical Docking Pair (studyId + compoundId + proteinId).
+ * Exactly one pair exists per compound x target combination.
+ * Reruns create new DockingRuns under this pair rather than creating duplicate pairs.
+ */
+export const DockingPairSchema = ScientificRecordBaseSchema.extend({
+  compoundId: z.string().min(1),
+  proteinId: z.string().min(1),
+  targetId: z.string().optional(),
+  compoundName: z.string().optional(),
+  targetName: z.string().optional(),
+  status: DockingPairStatusSchema.default("PENDING"),
+  latestRunId: z.string().nullable().optional(),
+  latestBindingAffinity: z.number().nullable().optional(),
+  runsCount: z.number().int().default(0),
+  archived: z.boolean().default(false),
+})
+export type DockingPair = z.infer<typeof DockingPairSchema>
+
+/**
+ * AutoDock Vina result recorded for one study ligand - protein execution.
+ * Multiple runs may belong to the same canonical DockingPair.
+ * Affinities come only from AutoDock Vina output.
  */
 export const DockingRunSchema = ScientificRecordBaseSchema.extend({
+  pairId: z.string().optional(),
   runName: z.string().min(1),
   compoundId: z.string().min(1),
   proteinId: z.string().min(1),
-  vinaVersion: z.string().min(1),
+  /** Present when the Vina log states a version. Omitted when the file does not. */
+  vinaVersion: z.string().min(1).optional(),
   receptorPdbId: z.string().optional(),
   ligandName: z.string().optional(),
   ligandPubchemCid: z.number().int().optional(),
-  exhaustiveness: z.number().positive(),
+  exhaustiveness: z.number().positive().optional(),
   numModes: z.number().int().positive().optional(),
   energyRange: z.number().optional(),
-  searchBox: DockingSearchBoxSchema,
+  /** Present only when the imported file states the search box. */
+  searchBox: DockingSearchBoxSchema.optional(),
   modes: z.array(DockingModeSchema).min(1),
   bestBindingAffinityKcalMol: z.number(),
   selectedMode: z.number().int().positive().optional(),
   interactions: z.array(DockingInteractionSchema).default([]),
+  /** Comma-separated residues entered by the researcher. */
+  interactingResidues: z.string().nullish(),
+  interactionNotes: z.string().nullish(),
+  sourceFileName: z.string().optional(),
+  poseFileName: z.string().nullish(),
+  /** Best-mode coordinates from Vina output. Never a PubChem conformer. */
+  poseModel: z.string().max(400_000).nullish(),
+  ligandSource: z.string().min(1).optional(),
+  receptorSource: z.string().min(1).optional(),
+  dockingProfileId: z.string().min(1).optional(),
+  dockingProfileVersion: z.string().min(1).optional(),
+  researchTarget: z.string().optional(),
+  actualDockingReceptor: z.string().optional(),
+  structureSource: z.enum(["EXPERIMENTAL_STRUCTURE", "PREDICTED_STRUCTURE"]).optional(),
+  structureId: z.string().optional(),
+  structureMethod: z.string().optional(),
+  receptorUniProt: z.string().optional(),
+  receptorChains: z.array(z.string()).optional(),
+  referenceEntity: z.string().optional(),
+  bindingSiteSource: z.string().optional(),
+  gridDerivation: z.string().optional(),
+  gridCenter: z.object({ x: z.number(), y: z.number(), z: z.number() }).optional(),
+  gridSize: z.object({ x: z.number(), y: z.number(), z: z.number() }).optional(),
+  modelSource: z.string().optional(),
+  modelVersion: z.string().optional(),
+  modelConfidence: z.string().optional(),
+  bindingSiteValidationMethod: z.string().optional(),
+  executionStatus: z.string().optional(),
+  completedAt: z.string().optional(),
   status: z.enum(["draft", "imported", "final"]).default("imported"),
 })
 export type DockingRun = z.infer<typeof DockingRunSchema>
@@ -238,6 +480,35 @@ export const DockingRunInputSchema = DockingRunSchema.omit({
   }),
 })
 export type DockingRunInput = z.infer<typeof DockingRunInputSchema>
+
+/**
+ * Researcher decision that a pair cannot be docked.
+ * This is not a Vina result and must not carry a predicted affinity.
+ */
+export const SkippedDockingPairSchema = z.object({
+  id: z.string().min(1),
+  studyId: z.string().min(1),
+  compoundId: z.string().min(1),
+  compoundName: z.string().min(1),
+  proteinId: z.string().min(1),
+  targetId: z.string().min(1),
+  targetName: z.string().min(1),
+  runName: z.string().min(1),
+  ligandName: z.string().optional(),
+  status: z.literal("SKIPPED"),
+  dockingStatus: z.literal("SKIPPED"),
+  bindingAffinity: z.null(),
+  bestBindingAffinityKcalMol: z.null(),
+  reason: z.string().min(1),
+  modes: z.array(DockingModeSchema).max(0).default([]),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  createdBy: z.string().min(1),
+  updatedBy: z.string().min(1),
+})
+export type SkippedDockingPair = z.infer<typeof SkippedDockingPairSchema>
+
+export const DOCKING_SKIP_REASON = "AutoDock Vina docking profile unavailable"
 
 export const PredictionModuleSchema = z.enum([
   "dpph",
@@ -263,7 +534,7 @@ export const PredictionMethodTypeSchema = z.enum([
 ])
 export type PredictionMethodType = z.infer<typeof PredictionMethodTypeSchema>
 
-/** One stored computational result point — never auto-generated */
+/** One stored computational result point  -  never auto-generated */
 export const PredictionResultPointSchema = z.object({
   concentration: z.number(),
   concentrationUnit: PredictionConcentrationUnitSchema,
@@ -276,17 +547,26 @@ export type PredictionResultPoint = z.infer<typeof PredictionResultPointSchema>
 
 /**
  * In-silico prediction import/record (Phase 6).
- * Values must come from a documented external method — never Hill/random sims.
+ * Values must come from a documented external method  -  never Hill/random sims.
  */
 export const PredictionRunSchema = ScientificRecordBaseSchema.extend({
   /** Canonical endpoint id (also historically called module) */
   endpoint: PredictionModuleSchema,
-  /** @deprecated Prefer endpoint — kept in sync for older readers */
+  /** @deprecated Prefer endpoint  -  kept in sync for older readers */
   module: PredictionModuleSchema,
   runName: z.string().min(1),
   compoundId: z.string().optional(),
   formulationId: z.string().optional(),
   cellLineId: z.string().optional(),
+  proteinId: z.string().nullish(),
+  summaryIc50: z.number().nullish(),
+  summaryIc50Unit: z.string().nullish(),
+  summaryMaximum: z.number().nullish(),
+  summaryMaximumUnit: z.string().nullish(),
+  teac: z.string().nullish(),
+  selectivityIndex: z.string().nullish(),
+  pathwayEffect: z.string().nullish(),
+  concentrationUnitLabel: z.string().nullish(),
   methodName: z.string().min(1),
   methodVersion: z.string().optional(),
   methodType: PredictionMethodTypeSchema,
@@ -320,9 +600,38 @@ export const PredictionRunInputSchema = PredictionRunSchema.omit({
 })
 export type PredictionRunInput = z.infer<typeof PredictionRunInputSchema>
 
+export const LabEndpointSchema = z.enum(["dpph", "mtt", "ldh", "ros", "bax", "hippo_yap"])
+export type LabEndpoint = z.infer<typeof LabEndpointSchema>
+
+/** Researcher-entered experimental rows for endpoints without a locked plate design. */
+export const LabObservationRoleSchema = z.enum(["untreated", "vehicle", "positive", "treatment"])
+export type LabObservationRole = z.infer<typeof LabObservationRoleSchema>
+
+export const LabObservationSchema = z.object({
+  treatment: z.string().optional(),
+  concentration: z.string().optional(),
+  parameter: z.string().optional(),
+  unit: z.string().optional(),
+  role: LabObservationRoleSchema.optional(),
+  /** Raw replicate measurements. Mean and SD are stored separately. */
+  replicates: z.array(z.number()).default([]),
+  /** Raw single measurement when the method is not recorded as replicates. */
+  value: z.number().optional(),
+  mean: z.number().optional(),
+  sd: z.number().optional(),
+  /** Derived from raw absorbance and a recorded control. Omitted when it cannot be calculated. */
+  viabilityPercent: z.number().optional(),
+  inhibitionPercent: z.number().optional(),
+})
+export type LabObservation = z.infer<typeof LabObservationSchema>
+
 export const LabAssaySchema = z.enum([
   "dpph",
+  "mtt",
   "ldh",
+  "ros",
+  "bax",
+  "hippo_yap",
   "hplc",
   "proximate",
   "nutritive",
@@ -333,7 +642,7 @@ export const LabAssaySchema = z.enum([
 ])
 export type LabAssay = z.infer<typeof LabAssaySchema>
 
-/** Experimental assay concentration unit — µg/mL only under the contract */
+/** Experimental assay concentration unit  -   - g/mL only under the contract */
 export const LabConcentrationUnitSchema = z.enum(["ug_per_mL"])
 export type LabConcentrationUnit = z.infer<typeof LabConcentrationUnitSchema>
 
@@ -343,7 +652,7 @@ export type LabTreatmentCode = z.infer<typeof LabTreatmentCodeSchema>
 export const LabReplicateCodeSchema = z.enum(["R1", "R2", "R3"])
 export type LabReplicateCode = z.infer<typeof LabReplicateCodeSchema>
 
-/** Externally calculated IC50 — never invented by the app */
+/** Externally calculated IC50  -  never invented by the app */
 export const LabIc50RecordSchema = z.object({
   value: z.number(),
   unit: z.string().min(1),
@@ -447,21 +756,26 @@ export const CharacterizationPayloadSchema = z.object({
 export type CharacterizationPayload = z.infer<typeof CharacterizationPayloadSchema>
 
 /**
- * Laboratory dataset (Phase 7). Evidence class is always EXPERIMENTAL.
+ * Laboratory dataset. Researcher entry is EXPERIMENTAL.
+ * A record is SYNTHETIC only when that class is stored explicitly.
  * Raw replicates live in the replicates subcollection.
  */
 export const LabDatasetSchema = ScientificRecordBaseSchema.extend({
-  /** Alias kept for older readers — same as assayType */
+  /** Alias kept for older readers  -  same as assayType */
   assay: LabAssaySchema,
   assayType: LabAssaySchema,
   datasetName: z.string().min(1),
+  /** Stable biological endpoint for later predicted-versus-experimental matching. */
+  endpointType: LabEndpointSchema.optional(),
   formulationId: z.string().optional(),
+  compoundId: z.string().optional(),
   cellLineId: z.string().optional(),
   /** Denormalized display name (e.g. HepG2) */
   cellLineName: z.string().optional(),
-  laboratoryName: z.string().min(1),
+  proteinId: z.string().optional(),
+  laboratoryName: z.string().default(""),
   datePerformed: z.string().min(1),
-  protocolReference: z.string().min(1),
+  protocolReference: z.string().default(""),
   /** @deprecated Prefer protocolReference */
   protocolRef: z.string().optional(),
   kitName: z.string().optional(),
@@ -475,11 +789,12 @@ export const LabDatasetSchema = ScientificRecordBaseSchema.extend({
   controlT1Detail: z.string().optional(),
   controlT2Detail: z.string().optional(),
   treatmentSummaries: z.array(LabTreatmentSummarySchema).default([]),
+  observations: z.array(LabObservationSchema).default([]),
   ic50: LabIc50RecordSchema.optional(),
   characterization: CharacterizationPayloadSchema.optional(),
   status: z.enum(["draft", "locked", "final"]).default("draft"),
   provenance: ProvenanceSchema.extend({
-    evidenceClass: z.literal("EXPERIMENTAL"),
+    evidenceClass: z.enum(["EXPERIMENTAL", "SYNTHETIC"]),
   }),
 })
 export type LabDataset = z.infer<typeof LabDatasetSchema>
@@ -493,7 +808,7 @@ export const LabDatasetInputSchema = LabDatasetSchema.omit({
   updatedBy: true,
 }).extend({
   provenance: ProvenanceSchema.extend({
-    evidenceClass: z.literal("EXPERIMENTAL"),
+    evidenceClass: z.enum(["EXPERIMENTAL", "SYNTHETIC"]),
   }),
 })
 export type LabDatasetInput = z.infer<typeof LabDatasetInputSchema>
@@ -508,7 +823,7 @@ export const LabReplicateSchema = z.object({
   replicateN: z.number().int().min(1).max(3).optional(),
   concentration: z.number().optional(),
   concentrationUnit: LabConcentrationUnitSchema.optional(),
-  /** Raw experimental measurements only — never overwrite when deriving summaries */
+  /** Raw experimental measurements only  -  never overwrite when deriving summaries */
   measurements: z
     .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
     .default({}),
@@ -542,7 +857,7 @@ export const StatisticsRecordSchema = ScientificRecordBaseSchema.extend({
   measurementKey: z.string().min(1),
   measurementLabel: z.string().min(1),
   alpha: z.number().positive().default(0.05),
-  /** Snapshot identifiers for stale detection — not a full raw-data copy */
+  /** Snapshot identifiers for stale detection  -  not a full raw-data copy */
   sourceDatasetUpdatedAt: z.string().min(1),
   sourceFingerprint: z.string().min(1),
   treatmentSummaries: z
@@ -612,7 +927,7 @@ export const StatisticsRecordSchema = ScientificRecordBaseSchema.extend({
   calculatedAt: z.string(),
   calculatedBy: z.string().min(1),
   status: z.enum(["draft", "final"]).default("final"),
-  /** Runtime freshness flag — not necessarily persisted */
+  /** Runtime freshness flag  -  not necessarily persisted */
   freshness: z.enum(["CURRENT", "STALE"]).optional(),
 })
 export type StatisticsRecord = z.infer<typeof StatisticsRecordSchema>
@@ -627,7 +942,7 @@ export const StatisticsCreateInputSchema = z.object({
 export type StatisticsCreateInput = z.infer<typeof StatisticsCreateInputSchema>
 
 export const ComparisonRecordSchema = ScientificRecordBaseSchema.extend({
-  /** Comparison endpoint — DPPH or LDH only */
+  /** Comparison endpoint  -  DPPH or LDH only */
   endpoint: z.enum(["dpph", "ldh"]),
   /** @deprecated Prefer endpoint */
   assay: z.enum(["dpph", "ldh"]).optional(),
@@ -670,7 +985,7 @@ export const ComparisonRecordSchema = ScientificRecordBaseSchema.extend({
     )
     .default([]),
 
-  /** Researcher-authored notes — INTERPRETATION layer, not auto-generated */
+  /** Researcher-authored notes  -  INTERPRETATION layer, not auto-generated */
   researcherNotes: z.string().optional(),
 
   sourcePredictionUpdatedAt: z.string().min(1),
@@ -681,7 +996,7 @@ export const ComparisonRecordSchema = ScientificRecordBaseSchema.extend({
   calculationMethod: z.string().default("PRED_VS_EXP_SIDE_BY_SIDE_ALIGNED"),
   calculationVersion: z.string().default("1.0.0"),
 
-  /** Legacy loose bag — kept empty for older readers */
+  /** Legacy loose bag  -  kept empty for older readers */
   metrics: z
     .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
     .default({}),
@@ -740,6 +1055,40 @@ export const InterpretationLinkedEvidenceSchema = z.object({
 })
 export type InterpretationLinkedEvidence = z.infer<typeof InterpretationLinkedEvidenceSchema>
 
+export const InterpretationEndpointFindingsSchema = z.object({
+  dpph: z.string().optional(),
+  mtt: z.string().optional(),
+  ldh: z.string().optional(),
+  ros: z.string().optional(),
+  bax: z.string().optional(),
+  hippoYap: z.string().optional(),
+})
+export type InterpretationEndpointFindings = z.infer<typeof InterpretationEndpointFindingsSchema>
+
+export const InterpretationEvidenceUsedSchema = z.object({
+  compounds: z.array(z.string()).max(24),
+  dockingResults: z.number().int().nonnegative(),
+  predictionEndpoints: z.number().int().nonnegative(),
+  experimentalRecorded: z.number().int().nonnegative(),
+  experimentalEndpoints: z.number().int().nonnegative(),
+  statistics: z.enum(["available", "not_recorded"]),
+  characterization: z.enum(["available", "not_recorded"]),
+  literature: z.number().int().nonnegative(),
+})
+export type InterpretationEvidenceUsed = z.infer<typeof InterpretationEvidenceUsedSchema>
+
+export const InterpretationAiAssistanceSchema = z.object({
+  generatedWithAI: z.literal(true),
+  provider: z.literal("Together AI"),
+  model: z.string().min(1),
+  generatedAt: z.string(),
+  reviewedBy: z.string().optional(),
+  reviewedAt: z.string().optional(),
+  evidenceSnapshot: z.string(),
+  evidenceUsed: InterpretationEvidenceUsedSchema.optional(),
+})
+export type InterpretationAiAssistance = z.infer<typeof InterpretationAiAssistanceSchema>
+
 export const HypothesisAssessmentSchema = z.enum([
   "not_assessed",
   "supported",
@@ -753,7 +1102,7 @@ export type InterpretationStatus = z.infer<typeof InterpretationStatusSchema>
 
 export const InterpretationSchema = ScientificRecordBaseSchema.extend({
   title: z.string().min(1),
-  /** @deprecated Prefer interpretationText — kept for older draft records */
+  /** @deprecated Prefer interpretationText  -  kept for older draft records */
   body: z.string().optional().default(""),
 
   researchQuestion: z.string().default(""),
@@ -776,6 +1125,16 @@ export const InterpretationSchema = ScientificRecordBaseSchema.extend({
   interpretationText: z.string().optional().default(""),
   limitations: z.string().optional().default(""),
   conclusion: z.string().optional().default(""),
+  endpointFindings: InterpretationEndpointFindingsSchema.optional(),
+  dockingInterpretation: z.string().optional(),
+  characterizationInterpretation: z.string().optional(),
+  /** Automatic Research AI Interpretation. Not a researcher-authored record. */
+  generatedBy: z.literal("ai").optional(),
+  provider: z.literal("Together AI").optional(),
+  model: z.string().optional(),
+  generatedAt: z.string().optional(),
+  evidenceVersion: z.string().optional(),
+  aiAssistance: InterpretationAiAssistanceSchema.optional(),
 
   hypothesisAssessment: HypothesisAssessmentSchema.default("not_assessed"),
   assessmentRationale: z.string().optional(),
@@ -803,6 +1162,15 @@ export const InterpretationCreateInputSchema = z.object({
   interpretationText: z.string().optional(),
   limitations: z.string().optional(),
   conclusion: z.string().optional(),
+  endpointFindings: InterpretationEndpointFindingsSchema.optional(),
+  dockingInterpretation: z.string().optional(),
+  characterizationInterpretation: z.string().optional(),
+  generatedBy: z.literal("ai").optional(),
+  provider: z.literal("Together AI").optional(),
+  model: z.string().optional(),
+  generatedAt: z.string().optional(),
+  evidenceVersion: z.string().optional(),
+  aiAssistance: InterpretationAiAssistanceSchema.optional(),
   hypothesisAssessment: HypothesisAssessmentSchema.optional(),
   assessmentRationale: z.string().optional(),
   notes: z.string().optional(),

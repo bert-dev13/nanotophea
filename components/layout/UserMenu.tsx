@@ -3,11 +3,9 @@
 import { useEffect, useId, useRef, useState } from "react"
 import { ChevronDown, LogOut } from "lucide-react"
 import { useAuth } from "@/components/providers/AuthProvider"
-import { useStudy } from "@/components/providers/StudyProvider"
 
 export function UserMenu() {
   const { profile, logout } = useAuth()
-  const { membership } = useStudy()
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const menuId = useId()
@@ -36,8 +34,6 @@ export function UserMenu() {
       .map((p) => p[0]?.toUpperCase())
       .join("") || "U"
 
-  const isAdmin = membership?.role === "OWNER"
-
   return (
     <div className="relative shrink-0" ref={rootRef}>
       <button
@@ -58,11 +54,6 @@ export function UserMenu() {
           <span className="max-w-[8rem] truncate text-[12px] font-semibold text-slate-900">
             {profile?.displayName || "Account"}
           </span>
-          {isAdmin ? (
-            <span className="mt-0.5 text-[9px] font-bold uppercase tracking-[0.06em] text-teal-700">
-              Admin
-            </span>
-          ) : null}
         </span>
         <ChevronDown
           size={13}
@@ -84,11 +75,6 @@ export function UserMenu() {
               {profile?.displayName || "Account"}
             </p>
             <p className="mt-0.5 truncate text-[11px] text-slate-500">{profile?.email}</p>
-            {isAdmin ? (
-              <p className="mt-2 inline-flex rounded-md bg-teal-50 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-teal-800">
-                ADMINISTRATOR
-              </p>
-            ) : null}
           </div>
           <button
             type="button"

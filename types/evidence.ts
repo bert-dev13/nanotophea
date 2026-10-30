@@ -4,6 +4,7 @@ export type EvidenceType =
   | "LITERATURE"
   | "PREDICTED"
   | "EXPERIMENTAL"
+  | "SYNTHETIC"
   | "INTERPRETATION"
   | "SIMULATION"
 
@@ -38,6 +39,13 @@ export const EVIDENCE_META: Record<
     color: "#047857",
     bg: "#ecfdf5",
     border: "#6ee7b7",
+  },
+  SYNTHETIC: {
+    label: "Synthetic",
+    short: "SYNTHETIC",
+    color: "#9a3412",
+    bg: "#fff7ed",
+    border: "#fdba74",
   },
   INTERPRETATION: {
     label: "Interpretation",

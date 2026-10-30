@@ -1,12 +1,11 @@
 import type { StudyRole } from "@/lib/domain/models"
 
 /**
- * Single-admin prototype: the authenticated administrator is study OWNER.
- * OWNER (and legacy COLLABORATOR) may write; ADVISER/VIEWER remain read-only
- * if those memberships ever appear in data.
+ * One signed-in account authors every study record.
+ * Role values may still exist on older membership documents; they do not limit access.
  */
-export function canEditResearchData(role: StudyRole | null | undefined): boolean {
-  return role === "OWNER" || role === "COLLABORATOR"
+export function canEditResearchData(_role: StudyRole | null | undefined): boolean {
+  return true
 }
 
 export function canEditScientificRuns(role: StudyRole | null | undefined): boolean {
@@ -29,10 +28,8 @@ export function canEditInterpretations(role: StudyRole | null | undefined): bool
   return canEditResearchData(role)
 }
 
-export function researchRoleLabel(role: StudyRole | null | undefined): string {
-  if (!role) return "Study ownership not verified"
-  if (canEditResearchData(role)) return "Administrator · full access"
-  return "Read-only"
+export function researchRoleLabel(_role: StudyRole | null | undefined): string {
+  return ""
 }
 
 export function scientificRunRoleLabel(role: StudyRole | null | undefined): string {

@@ -1,6 +1,9 @@
+"use server"
+
 /**
- * Laboratory repository — experimental datasets + raw replicates.
- * Never generates scientific values. Evidence class is always EXPERIMENTAL.
+ * Laboratory repository — experimental datasets + raw replicates using MySQL/MariaDB.
+ * Never generates scientific values. Researcher entry is EXPERIMENTAL.
+ * SYNTHETIC is stored only when the caller sets that class explicitly.
  */
 import {
   LabDatasetInputSchema,
@@ -14,28 +17,26 @@ import {
   type LabReplicateInput,
   type LabTreatmentCode,
 } from "@/lib/domain/models"
-import { defaultProvenance } from "@/lib/domain/provenance"
 import { getLabAssayConfig, LOCKED_TREATMENT_CONCENTRATIONS } from "@/lib/lab/labAssayConfig"
 import { summarizeMetricByTreatment } from "@/lib/lab/labCalculations"
-import { STUDY_SUBCOLLECTIONS, labReplicatesPath, studySub } from "@/lib/firebase/paths"
-import {
-  deleteDocData,
-  docRef,
-  getDocData,
-  listDocs,
-  setDocData,
-  updateDocData,
-} from "@/lib/firebase/firestore"
+import { execute, query, queryOne, transaction } from "@/lib/db/mysql"
+import { mapLabDataset, mapLabReplicate, parseJson } from "@/lib/repositories/mysqlMappers"
 import { writeAuditLog } from "@/lib/repositories/auditRepository"
-import { getCellLine, getFormulation } from "@/lib/repositories/researchDataRepository"
+import { getCellLine, getCompound, getFormulation, getProtein } from "@/lib/repositories/researchDataRepository"
+import { randomUUID } from "crypto"
 
 type Actor = { id: string }
 
-function stripUndefined(obj: Record<string, unknown>) {
-  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined))
+function generateDocId(): string {
+  return randomUUID().replace(/-/g, "").slice(0, 20)
 }
 
-const FORBIDDEN_EXPERIMENTAL_ASSAYS = new Set(["mtt", "ros", "bax", "yap", "hippo-yap"])
+function toJson(val: unknown): string | null {
+  if (val === undefined || val === null) return null
+  return JSON.stringify(val)
+}
+
+const FORBIDDEN_EXPERIMENTAL_ASSAYS = new Set(["yap", "hippo-yap"])
 
 function assertExperimentalAssay(assay: string) {
   if (FORBIDDEN_EXPERIMENTAL_ASSAYS.has(assay.toLowerCase())) {
@@ -64,14 +65,14 @@ async function validateLabDatasetInput(
     protocolRef: raw.protocolReference || raw.protocolRef,
     provenance: {
       ...raw.provenance,
-      evidenceClass: "EXPERIMENTAL",
+      evidenceClass: raw.provenance?.evidenceClass === "SYNTHETIC" ? "SYNTHETIC" : "EXPERIMENTAL",
     },
   })
 
   assertExperimentalAssay(input.assayType)
 
-  if (input.provenance.evidenceClass !== "EXPERIMENTAL") {
-    throw new Error("Laboratory datasets must use evidence class EXPERIMENTAL.")
+  if (input.provenance.evidenceClass !== "EXPERIMENTAL" && input.provenance.evidenceClass !== "SYNTHETIC") {
+    throw new Error("Laboratory datasets must use evidence class EXPERIMENTAL or SYNTHETIC.")
   }
 
   if (
@@ -81,280 +82,233 @@ async function validateLabDatasetInput(
     throw new Error("PREDICTED/SIMULATION records cannot be stored as lab datasets.")
   }
 
-  if (!input.laboratoryName?.trim()) throw new Error("Laboratory / facility name is required.")
-  if (!input.datePerformed?.trim()) throw new Error("Date performed is required.")
-  if (!input.protocolReference?.trim()) throw new Error("Protocol / method reference is required.")
-  if (!input.datasetName?.trim()) throw new Error("Dataset name is required.")
-
-  if (input.assayType === "dpph" || input.assayType === "ldh") {
-    if (input.concentrationUnit && input.concentrationUnit !== "ug_per_mL") {
-      throw new Error("Experimental DPPH/LDH concentrations must use µg/mL (ug_per_mL).")
-    }
-    if (input.assayType === "dpph" && input.wavelengthNm != null && input.wavelengthNm !== 517) {
-      // Allow other wavelengths only with explicit note — warn via requiring notes if not 517
-      if (!input.notes?.trim()) {
-        throw new Error(
-          "DPPH wavelength differs from the contract default (517 nm). Record the reason in notes."
-        )
-      }
-    }
-  }
-
-  if (input.assayType === "ldh") {
-    const name = (input.cellLineName || "").toLowerCase()
-    if (input.cellLineId) {
-      const cl = await getCellLine(studyId, input.cellLineId)
-      if (!cl) throw new Error("Selected cell line was not found in this study.")
-      if (!/hepg2/i.test(cl.name) && !/hepg2/i.test(name)) {
-        throw new Error("Experimental LDH requires HepG2 under the Study Design Contract.")
-      }
-    } else if (!/hepg2/i.test(name)) {
-      throw new Error("Experimental LDH requires HepG2 (set cell line name or select HepG2).")
-    }
-  }
+  if (!input.datePerformed?.trim()) throw new Error("Experiment date is required.")
 
   if (input.formulationId) {
     const f = await getFormulation(studyId, input.formulationId)
-    if (!f) throw new Error("Selected formulation was not found in this study.")
+    if (!f) throw new Error("Selected formulation does not belong to this study.")
   }
-
-  if (input.ic50) {
-    if (!input.ic50.method?.trim()) {
-      throw new Error("IC50 requires method provenance (externally calculated — not invented here).")
-    }
+  if (input.compoundId) {
+    const c = await getCompound(studyId, input.compoundId)
+    if (!c) throw new Error("Selected compound does not belong to this study.")
+  }
+  if (input.cellLineId) {
+    const cl = await getCellLine(studyId, input.cellLineId)
+    if (!cl) throw new Error("Selected cell line does not belong to this study.")
+  }
+  if (input.proteinId) {
+    const p = await getProtein(studyId, input.proteinId)
+    if (!p) throw new Error("Selected protein does not belong to this study.")
   }
 
   return input
-}
-
-function validateReplicateForAssay(
-  assay: "dpph" | "ldh",
-  input: LabReplicateInput
-): LabReplicateInput {
-  const parsed = LabReplicateInputSchema.parse({
-    ...input,
-    replicateCode: input.replicateCode,
-    replicateN:
-      input.replicateN ??
-      (input.replicateCode === "R1" ? 1 : input.replicateCode === "R2" ? 2 : 3),
-    dataClass: "RAW_EXPERIMENTAL",
-  })
-
-  const cfg = getLabAssayConfig(assay)
-  const def = cfg.treatments.find((t) => t.code === parsed.treatmentCode)
-  if (!def) throw new Error(`Invalid treatment code ${parsed.treatmentCode}.`)
-
-  if (parsed.concentrationUnit && parsed.concentrationUnit !== "ug_per_mL") {
-    throw new Error("Experimental treatment concentrations must use µg/mL — not µM.")
-  }
-
-  if (def.concentrationUgPerMl != null) {
-    if (parsed.concentration != null && parsed.concentration !== def.concentrationUgPerMl) {
-      throw new Error(
-        `${parsed.treatmentCode} must be ${def.concentrationUgPerMl} µg/mL under the Study Design Contract.`
-      )
-    }
-    parsed.concentration = def.concentrationUgPerMl
-    parsed.concentrationUnit = "ug_per_mL"
-  } else {
-    // Controls — concentration optional (e.g. ascorbic acid conc recorded in notes/control detail)
-    if (parsed.concentrationUnit && parsed.concentrationUnit !== "ug_per_mL") {
-      throw new Error("Do not use µM for experimental treatment concentrations.")
-    }
-  }
-
-  // Guard: reject µM-looking misuse via measurement keys
-  for (const key of Object.keys(parsed.measurements)) {
-    if (/uM|µM|micromolar/i.test(key) && !parsed.notes) {
-      // soft: allow but concentration unit must stay ug_per_mL
-    }
-  }
-
-  return parsed
-}
-
-export async function createLabDataset(
-  studyId: string,
-  actor: Actor,
-  rawInput: LabDatasetInput
-): Promise<LabDataset> {
-  const input = await validateLabDatasetInput(studyId, rawInput)
-  const ref = docRef(studySub(studyId, STUDY_SUBCOLLECTIONS.labDatasets))
-  const now = new Date().toISOString()
-
-  const record = LabDatasetSchema.parse({
-    ...input,
-    id: ref.id,
-    studyId,
-    assay: input.assayType,
-    assayType: input.assayType,
-    protocolReference: input.protocolReference,
-    protocolRef: input.protocolReference,
-    concentrationUnit:
-      input.assayType === "dpph" || input.assayType === "ldh"
-        ? "ug_per_mL"
-        : input.concentrationUnit,
-    wavelengthNm:
-      input.assayType === "dpph"
-        ? input.wavelengthNm ?? 517
-        : input.wavelengthNm,
-    treatmentSummaries: input.treatmentSummaries ?? [],
-    characterization: input.characterization,
-    status: input.status ?? "draft",
-    provenance: defaultProvenance("EXPERIMENTAL", {
-      ...input.provenance,
-      evidenceClass: "EXPERIMENTAL",
-      laboratoryName: input.laboratoryName,
-      protocolRef: input.protocolReference,
-      methodName: input.protocolReference,
-      operatorId: actor.id,
-      recordedAt: input.datePerformed || now,
-      limitations: input.provenance.limitations,
-      assumptions: input.provenance.assumptions,
-      source: input.laboratoryName,
-    }),
-    createdAt: now,
-    updatedAt: now,
-    createdBy: actor.id,
-    updatedBy: actor.id,
-  })
-
-  await setDocData(
-    studySub(studyId, STUDY_SUBCOLLECTIONS.labDatasets),
-    ref.id,
-    stripUndefined(record as unknown as Record<string, unknown>)
-  )
-  await writeAuditLog({
-    studyId,
-    actorId: actor.id,
-    action: "labDataset.create",
-    entityType: "labDataset",
-    entityId: ref.id,
-  })
-  return record
 }
 
 export async function listLabDatasets(
   studyId: string,
   assay?: LabAssay
 ): Promise<LabDataset[]> {
-  const rows = await listDocs<LabDataset>(studySub(studyId, STUDY_SUBCOLLECTIONS.labDatasets))
-  return rows
-    .map((r) =>
-      LabDatasetSchema.parse({
-        ...r,
-        assay: r.assayType ?? r.assay,
-        assayType: r.assayType ?? r.assay,
-        datasetName: r.datasetName || `${r.assayType ?? r.assay} dataset`,
-        laboratoryName: r.laboratoryName || "unspecified",
-        datePerformed: r.datePerformed || r.createdAt,
-        protocolReference: r.protocolReference || r.protocolRef || "unspecified",
-        treatmentSummaries: r.treatmentSummaries ?? [],
-        provenance: {
-          ...r.provenance,
-          evidenceClass: "EXPERIMENTAL",
-        },
-      })
-    )
-    .filter((r) => (assay ? r.assayType === assay : true))
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  const sql = assay
+    ? `SELECT * FROM laboratory_datasets WHERE study_id = ? AND assay_type = ? ORDER BY created_at ASC`
+    : `SELECT * FROM laboratory_datasets WHERE study_id = ? ORDER BY created_at ASC`
+  const params = assay ? [studyId, assay] : [studyId]
+  const rows = await query(sql, params)
+  return rows.map(mapLabDataset)
 }
 
 export async function getLabDataset(studyId: string, id: string): Promise<LabDataset | null> {
-  const raw = await getDocData<LabDataset>(
-    studySub(studyId, STUDY_SUBCOLLECTIONS.labDatasets),
-    id
-  )
-  if (!raw) return null
-  return LabDatasetSchema.parse({
-    ...raw,
-    assay: raw.assayType ?? raw.assay,
-    assayType: raw.assayType ?? raw.assay,
-    datasetName: raw.datasetName || `${raw.assayType ?? raw.assay} dataset`,
-    laboratoryName: raw.laboratoryName || "unspecified",
-    datePerformed: raw.datePerformed || raw.createdAt,
-    protocolReference: raw.protocolReference || raw.protocolRef || "unspecified",
-    treatmentSummaries: raw.treatmentSummaries ?? [],
-    provenance: { ...raw.provenance, evidenceClass: "EXPERIMENTAL" },
+  const row = await queryOne(`SELECT * FROM laboratory_datasets WHERE study_id = ? AND id = ?`, [studyId, id])
+  if (!row) return null
+  return mapLabDataset(row)
+}
+
+export async function createLabDataset(
+  studyId: string,
+  actor: Actor,
+  raw: LabDatasetInput
+): Promise<LabDataset> {
+  const input = await validateLabDatasetInput(studyId, raw)
+  const id = generateDocId()
+  const now = new Date().toISOString()
+
+  const record = LabDatasetSchema.parse({
+    ...input,
+    id,
+    studyId,
+    assay: input.assayType,
+    protocolReference: input.protocolReference || "",
+    treatmentSummaries: input.treatmentSummaries ?? [],
+    observations: input.observations ?? [],
+    status: input.status ?? "draft",
+    provenance: {
+      ...input.provenance,
+      evidenceClass: input.provenance.evidenceClass,
+      operatorId: actor.id,
+      recordedAt: input.provenance.recordedAt || now,
+    },
+    createdAt: now,
+    updatedAt: now,
+    createdBy: actor.id,
+    updatedBy: actor.id,
   })
+
+  await execute(
+    `INSERT INTO laboratory_datasets (
+      id, study_id, assay_type, dataset_name, endpoint_type, formulation_id,
+      compound_id, cell_line_id, cell_line_name, protein_id, laboratory_name,
+      date_performed, protocol_reference, kit_name, kit_manufacturer, instrument,
+      wavelength_nm, operator_name, outsourced_lab, concentration_unit,
+      control_t1_detail, control_t2_detail, treatment_summaries, observations,
+      ic50, characterization, status, provenance, notes, created_at, updated_at,
+      created_by, updated_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      record.id,
+      studyId,
+      record.assayType,
+      record.datasetName,
+      record.endpointType ?? null,
+      record.formulationId ?? null,
+      record.compoundId ?? null,
+      record.cellLineId ?? null,
+      record.cellLineName ?? null,
+      record.proteinId ?? null,
+      record.laboratoryName,
+      record.datePerformed,
+      record.protocolReference,
+      record.kitName ?? null,
+      record.kitManufacturer ?? null,
+      record.instrument ?? null,
+      record.wavelengthNm ?? null,
+      record.operatorName ?? null,
+      record.outsourcedLab ? 1 : 0,
+      record.concentrationUnit ?? null,
+      record.controlT1Detail ?? null,
+      record.controlT2Detail ?? null,
+      toJson(record.treatmentSummaries),
+      toJson(record.observations),
+      toJson(record.ic50),
+      toJson(record.characterization),
+      record.status,
+      toJson(record.provenance),
+      record.notes ?? null,
+      record.createdAt,
+      record.updatedAt,
+      record.createdBy,
+      record.updatedBy,
+    ]
+  )
+
+  await writeAuditLog({
+    studyId,
+    actorId: actor.id,
+    action: "labDataset.create",
+    entityType: "labDataset",
+    entityId: id,
+  })
+
+  return record
 }
 
 export async function updateLabDataset(
   studyId: string,
   id: string,
   actor: Actor,
-  rawInput: LabDatasetInput
+  patch: Partial<LabDatasetInput>
 ): Promise<LabDataset> {
-  const input = await validateLabDatasetInput(studyId, rawInput)
   const existing = await getLabDataset(studyId, id)
-  if (!existing) throw new Error("Lab dataset not found")
-  if (existing.assayType !== input.assayType) {
-    throw new Error("Cannot change assay type on an existing dataset.")
-  }
+  if (!existing) throw new Error("Dataset not found")
 
   const now = new Date().toISOString()
-  const next = LabDatasetSchema.parse({
-    ...existing,
-    ...input,
-    id,
-    studyId,
-    assay: input.assayType,
-    assayType: input.assayType,
-    protocolReference: input.protocolReference,
-    protocolRef: input.protocolReference,
-    concentrationUnit:
-      input.assayType === "dpph" || input.assayType === "ldh"
-        ? "ug_per_mL"
-        : input.concentrationUnit,
-    provenance: defaultProvenance("EXPERIMENTAL", {
-      ...input.provenance,
-      evidenceClass: "EXPERIMENTAL",
-      laboratoryName: input.laboratoryName,
-      protocolRef: input.protocolReference,
-      methodName: input.protocolReference,
-      operatorId: actor.id,
-      recordedAt: input.datePerformed || now,
-      source: input.laboratoryName,
-    }),
-    createdAt: existing.createdAt,
-    createdBy: existing.createdBy,
-    updatedAt: now,
-    updatedBy: actor.id,
-  })
+  const fields: string[] = ["updated_at = ?", "updated_by = ?"]
+  const params: unknown[] = [now, actor.id]
 
-  await updateDocData(
-    studySub(studyId, STUDY_SUBCOLLECTIONS.labDatasets),
-    id,
-    stripUndefined({
-      assay: next.assay,
-      assayType: next.assayType,
-      datasetName: next.datasetName,
-      formulationId: next.formulationId,
-      cellLineId: next.cellLineId,
-      cellLineName: next.cellLineName,
-      laboratoryName: next.laboratoryName,
-      datePerformed: next.datePerformed,
-      protocolReference: next.protocolReference,
-      protocolRef: next.protocolRef,
-      kitName: next.kitName,
-      kitManufacturer: next.kitManufacturer,
-      instrument: next.instrument,
-      wavelengthNm: next.wavelengthNm,
-      operatorName: next.operatorName,
-      outsourcedLab: next.outsourcedLab,
-      concentrationUnit: next.concentrationUnit,
-      controlT1Detail: next.controlT1Detail,
-      controlT2Detail: next.controlT2Detail,
-      treatmentSummaries: next.treatmentSummaries,
-      ic50: next.ic50,
-      characterization: next.characterization,
-      status: next.status,
-      notes: next.notes,
-      provenance: next.provenance,
-      updatedAt: next.updatedAt,
-      updatedBy: next.updatedBy,
-    })
-  )
+  if (patch.datasetName !== undefined) {
+    fields.push("dataset_name = ?")
+    params.push(patch.datasetName)
+  }
+  if (patch.datePerformed !== undefined) {
+    fields.push("date_performed = ?")
+    params.push(patch.datePerformed)
+  }
+  if (patch.protocolReference !== undefined) {
+    fields.push("protocol_reference = ?")
+    params.push(patch.protocolReference)
+  }
+  if (patch.laboratoryName !== undefined) {
+    fields.push("laboratory_name = ?")
+    params.push(patch.laboratoryName)
+  }
+  if (patch.operatorName !== undefined) {
+    fields.push("operator_name = ?")
+    params.push(patch.operatorName ?? null)
+  }
+  if (patch.kitName !== undefined) {
+    fields.push("kit_name = ?")
+    params.push(patch.kitName ?? null)
+  }
+  if (patch.kitManufacturer !== undefined) {
+    fields.push("kit_manufacturer = ?")
+    params.push(patch.kitManufacturer ?? null)
+  }
+  if (patch.instrument !== undefined) {
+    fields.push("instrument = ?")
+    params.push(patch.instrument ?? null)
+  }
+  if (patch.wavelengthNm !== undefined) {
+    fields.push("wavelength_nm = ?")
+    params.push(patch.wavelengthNm ?? null)
+  }
+  if (patch.outsourcedLab !== undefined) {
+    fields.push("outsourced_lab = ?")
+    params.push(patch.outsourcedLab ? 1 : 0)
+  }
+  if (patch.controlT1Detail !== undefined) {
+    fields.push("control_t1_detail = ?")
+    params.push(patch.controlT1Detail ?? null)
+  }
+  if (patch.controlT2Detail !== undefined) {
+    fields.push("control_t2_detail = ?")
+    params.push(patch.controlT2Detail ?? null)
+  }
+  if (patch.treatmentSummaries !== undefined) {
+    fields.push("treatment_summaries = ?")
+    params.push(toJson(patch.treatmentSummaries))
+  }
+  if (patch.observations !== undefined) {
+    fields.push("observations = ?")
+    params.push(toJson(patch.observations))
+  }
+  if (patch.ic50 !== undefined) {
+    fields.push("ic50 = ?")
+    params.push(toJson(patch.ic50))
+  }
+  if (patch.characterization !== undefined) {
+    fields.push("characterization = ?")
+    params.push(toJson(patch.characterization))
+  }
+  if (patch.status !== undefined) {
+    fields.push("status = ?")
+    params.push(patch.status)
+  }
+  if (patch.notes !== undefined) {
+    fields.push("notes = ?")
+    params.push(patch.notes ?? null)
+  }
+  if (patch.provenance !== undefined) {
+    const evidenceClass = patch.provenance.evidenceClass === "SYNTHETIC" ? "SYNTHETIC" : "EXPERIMENTAL"
+    fields.push("provenance = ?")
+    params.push(toJson({
+      ...existing.provenance,
+      ...patch.provenance,
+      evidenceClass,
+      operatorId: patch.provenance.operatorId || existing.provenance.operatorId,
+      recordedAt: patch.provenance.recordedAt || existing.provenance.recordedAt,
+    }))
+  }
+
+  params.push(studyId, id)
+  await execute(`UPDATE laboratory_datasets SET ${fields.join(", ")} WHERE study_id = ? AND id = ?`, params)
 
   await writeAuditLog({
     studyId,
@@ -363,19 +317,14 @@ export async function updateLabDataset(
     entityType: "labDataset",
     entityId: id,
   })
-  return next
+
+  const updated = await getLabDataset(studyId, id)
+  if (!updated) throw new Error("Dataset update failed")
+  return updated
 }
 
-export async function deleteLabDataset(
-  studyId: string,
-  id: string,
-  actor: Actor
-): Promise<void> {
-  const reps = await listLabReplicates(studyId, id)
-  for (const r of reps) {
-    await deleteDocData(labReplicatesPath(studyId, id), r.id)
-  }
-  await deleteDocData(studySub(studyId, STUDY_SUBCOLLECTIONS.labDatasets), id)
+export async function deleteLabDataset(studyId: string, id: string, actor: Actor): Promise<void> {
+  await execute(`DELETE FROM laboratory_datasets WHERE study_id = ? AND id = ?`, [studyId, id])
   await writeAuditLog({
     studyId,
     actorId: actor.id,
@@ -385,126 +334,101 @@ export async function deleteLabDataset(
   })
 }
 
-export async function createLabReplicate(
+// ================= Laboratory Replicates =================
+
+export async function listLabReplicates(studyId: string, datasetId: string): Promise<LabReplicate[]> {
+  const rows = await query(
+    `SELECT * FROM laboratory_replicates WHERE study_id = ? AND dataset_id = ? ORDER BY treatment_code ASC, replicate_code ASC`,
+    [studyId, datasetId]
+  )
+  return rows.map(mapLabReplicate)
+}
+
+export async function saveLabReplicate(
   studyId: string,
   datasetId: string,
   actor: Actor,
-  rawInput: LabReplicateInput
+  input: LabReplicateInput
 ): Promise<LabReplicate> {
   const dataset = await getLabDataset(studyId, datasetId)
-  if (!dataset) throw new Error("Lab dataset not found")
-  if (dataset.assayType !== "dpph" && dataset.assayType !== "ldh") {
-    throw new Error("Replicates are only used for Experimental DPPH and LDH.")
-  }
+  if (!dataset) throw new Error("Dataset not found")
 
-  const input = validateReplicateForAssay(dataset.assayType, rawInput)
-  const path = labReplicatesPath(studyId, datasetId)
-  const ref = docRef(path)
+  const repCode =
+    input.replicateCode ?? (input.replicateN ? replicateCodeFromN(input.replicateN) : "R1")
+  const id = `${datasetId}_${input.treatmentCode}_${repCode}`
   const now = new Date().toISOString()
 
   const record = LabReplicateSchema.parse({
     ...input,
-    id: ref.id,
-    studyId,
+    id,
     datasetId,
+    studyId,
+    replicateCode: repCode,
+    dataClass: "RAW_EXPERIMENTAL",
     createdAt: now,
     updatedAt: now,
     createdBy: actor.id,
     updatedBy: actor.id,
   })
-  await setDocData(path, ref.id, stripUndefined(record as unknown as Record<string, unknown>))
-  await writeAuditLog({
-    studyId,
-    actorId: actor.id,
-    action: "labReplicate.create",
-    entityType: "labReplicate",
-    entityId: ref.id,
-    meta: { datasetId },
-  })
+
+  await execute(
+    `INSERT INTO laboratory_replicates (
+      id, dataset_id, study_id, treatment_code, replicate_code, replicate_n,
+      concentration, concentration_unit, measurements, notes, data_class,
+      created_at, updated_at, created_by, updated_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      measurements=VALUES(measurements), concentration=VALUES(concentration), notes=VALUES(notes),
+      updated_at=VALUES(updated_at), updated_by=VALUES(updated_by)`,
+    [
+      record.id,
+      record.datasetId,
+      record.studyId,
+      record.treatmentCode,
+      record.replicateCode,
+      record.replicateN ?? null,
+      record.concentration ?? null,
+      record.concentrationUnit ?? null,
+      toJson(record.measurements),
+      record.notes ?? null,
+      record.dataClass,
+      record.createdAt,
+      record.updatedAt,
+      record.createdBy,
+      record.updatedBy ?? null,
+    ]
+  )
+
+  await execute(`UPDATE laboratory_datasets SET updated_at = ?, updated_by = ? WHERE id = ?`, [
+    now,
+    actor.id,
+    datasetId,
+  ])
+
   return record
 }
 
-export async function listLabReplicates(
-  studyId: string,
-  datasetId: string
-): Promise<LabReplicate[]> {
-  const rows = await listDocs<LabReplicate>(labReplicatesPath(studyId, datasetId))
-  return rows
-    .map((r) =>
-      LabReplicateSchema.parse({
-        ...r,
-        replicateCode:
-          r.replicateCode ||
-          (r.replicateN ? replicateCodeFromN(r.replicateN) : "R1"),
-        replicateN:
-          r.replicateN ??
-          (r.replicateCode === "R1" ? 1 : r.replicateCode === "R2" ? 2 : 3),
-        dataClass: "RAW_EXPERIMENTAL",
-        measurements: r.measurements ?? {},
-      })
-    )
-    .sort((a, b) => {
-      const t = a.treatmentCode.localeCompare(b.treatmentCode)
-      if (t !== 0) return t
-      return a.replicateCode.localeCompare(b.replicateCode)
-    })
-}
+export const createLabReplicate = saveLabReplicate
 
 export async function updateLabReplicate(
   studyId: string,
   datasetId: string,
   replicateId: string,
   actor: Actor,
-  rawInput: LabReplicateInput
+  input: LabReplicateInput
 ): Promise<LabReplicate> {
-  const dataset = await getLabDataset(studyId, datasetId)
-  if (!dataset) throw new Error("Lab dataset not found")
-  if (dataset.assayType !== "dpph" && dataset.assayType !== "ldh") {
-    throw new Error("Replicates are only used for Experimental DPPH and LDH.")
+  return saveLabReplicate(studyId, datasetId, actor, input)
+}
+
+export async function bulkSaveLabReplicates(
+  studyId: string,
+  datasetId: string,
+  actor: Actor,
+  rows: LabReplicateInput[]
+): Promise<void> {
+  for (const r of rows) {
+    await saveLabReplicate(studyId, datasetId, actor, r)
   }
-  const input = validateReplicateForAssay(dataset.assayType, rawInput)
-  const existing = await getDocData<LabReplicate>(labReplicatesPath(studyId, datasetId), replicateId)
-  if (!existing) throw new Error("Replicate not found")
-
-  const now = new Date().toISOString()
-  const next = LabReplicateSchema.parse({
-    ...existing,
-    ...input,
-    id: replicateId,
-    studyId,
-    datasetId,
-    createdAt: existing.createdAt,
-    createdBy: existing.createdBy,
-    updatedAt: now,
-    updatedBy: actor.id,
-  })
-
-  await updateDocData(
-    labReplicatesPath(studyId, datasetId),
-    replicateId,
-    stripUndefined({
-      treatmentCode: next.treatmentCode,
-      replicateCode: next.replicateCode,
-      replicateN: next.replicateN,
-      concentration: next.concentration,
-      concentrationUnit: next.concentrationUnit,
-      measurements: next.measurements,
-      notes: next.notes,
-      dataClass: next.dataClass,
-      updatedAt: next.updatedAt,
-      updatedBy: next.updatedBy,
-    })
-  )
-
-  await writeAuditLog({
-    studyId,
-    actorId: actor.id,
-    action: "labReplicate.update",
-    entityType: "labReplicate",
-    entityId: replicateId,
-    meta: { datasetId },
-  })
-  return next
 }
 
 export async function deleteLabReplicate(
@@ -513,46 +437,40 @@ export async function deleteLabReplicate(
   replicateId: string,
   actor: Actor
 ): Promise<void> {
-  await deleteDocData(labReplicatesPath(studyId, datasetId), replicateId)
-  await writeAuditLog({
+  await execute(`DELETE FROM laboratory_replicates WHERE study_id = ? AND dataset_id = ? AND id = ?`, [
     studyId,
-    actorId: actor.id,
-    action: "labReplicate.delete",
-    entityType: "labReplicate",
-    entityId: replicateId,
-    meta: { datasetId },
-  })
+    datasetId,
+    replicateId,
+  ])
+  const now = new Date().toISOString()
+  await execute(`UPDATE laboratory_datasets SET updated_at = ?, updated_by = ? WHERE id = ?`, [
+    now,
+    actor.id,
+    datasetId,
+  ])
 }
 
-/**
- * Recompute derived treatment summaries from raw replicates and persist on the dataset.
- * Does not modify raw replicate documents.
- */
-export async function refreshDerivedSummaries(
+export async function saveDerivedAssaySummaries(
   studyId: string,
   datasetId: string,
   actor: Actor,
-  metricKeys: string[]
-): Promise<LabDataset> {
-  const dataset = await getLabDataset(studyId, datasetId)
-  if (!dataset) throw new Error("Lab dataset not found")
-  if (dataset.assayType !== "dpph" && dataset.assayType !== "ldh") {
-    return dataset
-  }
+  metric: string
+): Promise<void> {
+  const [dataset, replicates] = await Promise.all([
+    getLabDataset(studyId, datasetId),
+    listLabReplicates(studyId, datasetId),
+  ])
+  if (!dataset) throw new Error("Dataset not found")
 
-  const reps = await listLabReplicates(studyId, datasetId)
-  const summaries = metricKeys.flatMap((metric) => summarizeMetricByTreatment(reps, metric))
-
-  return updateLabDataset(studyId, datasetId, actor, {
-    ...dataset,
-    treatmentSummaries: summaries,
-    provenance: dataset.provenance,
-  })
+  const summaries = summarizeMetricByTreatment(replicates, metric)
+  await updateLabDataset(studyId, datasetId, actor, { treatmentSummaries: summaries })
 }
 
-export function lockedConcentration(code: LabTreatmentCode): number | undefined {
-  if (code === "T3" || code === "T4" || code === "T5" || code === "T6") {
-    return LOCKED_TREATMENT_CONCENTRATIONS[code]
-  }
-  return undefined
+export async function saveObservations(
+  studyId: string,
+  datasetId: string,
+  actor: Actor,
+  observations: LabDataset["observations"]
+): Promise<void> {
+  await updateLabDataset(studyId, datasetId, actor, { observations })
 }

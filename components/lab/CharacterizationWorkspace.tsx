@@ -612,6 +612,7 @@ export function CharacterizationWorkspace() {
     return {
       assay: form.assayType,
       assayType: form.assayType,
+      observations: [],
       datasetName: form.datasetName.trim(),
       formulationId: form.formulationId || undefined,
       laboratoryName: form.laboratoryName.trim(),

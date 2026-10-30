@@ -1,73 +1,68 @@
 "use client"
 
 import { useRef, type KeyboardEvent } from "react"
-import { ArrowLeft, ArrowRight, Atom, Beaker, Check, FlaskConical, Microscope } from "lucide-react"
-import { SetupRecords, type SetupCategory } from "@/components/study/setup/SetupRecords"
+import { ArrowLeft, ArrowRight, Atom, Check, FlaskConical, Microscope } from "lucide-react"
+import { AskAiLink } from "@/components/ai/ask-ai-link"
+import { LibrarySelection, type LibraryCategory } from "@/components/study/setup/LibrarySelection"
+import { PhytochemicalBrowser } from "@/components/study/setup/PhytochemicalBrowser"
+import { ProteinBrowser } from "@/components/study/setup/ProteinBrowser"
+import { CellLineBrowser } from "@/components/study/setup/CellLineBrowser"
 import type { StudyReadiness } from "@/lib/workflow/studyFlow"
 
-type CountKey = "formulations" | "compounds" | "proteins" | "cellLines"
+type CountKey = "compounds" | "proteins" | "cellLines"
 
 interface SetupSection {
-  id: SetupCategory
+  id: LibraryCategory
   number: string
   label: string
   hint: string
   countKey: CountKey
-  icon: typeof Beaker
+  icon: typeof FlaskConical
 }
 
 const SECTIONS: SetupSection[] = [
   {
-    id: "formulation",
-    number: "01",
-    label: "Formulations",
-    hint: "Define what is prepared",
-    countKey: "formulations",
-    icon: Beaker,
-  },
-  {
     id: "phytochemicals",
-    number: "02",
+    number: "01",
     label: "Phytochemicals",
-    hint: "Choose compounds to study",
+    hint: "Select compounds to investigate",
     countKey: "compounds",
     icon: FlaskConical,
   },
   {
     id: "proteins",
-    number: "03",
+    number: "02",
     label: "Target proteins",
-    hint: "Choose docking targets",
+    hint: "Select docking targets",
     countKey: "proteins",
     icon: Atom,
   },
   {
     id: "cell-line",
-    number: "04",
+    number: "03",
     label: "Cell lines",
-    hint: "Define experimental models",
+    hint: "Select experimental models",
     countKey: "cellLines",
     icon: Microscope,
   },
 ]
 
-const MISSING_TAB: Record<string, SetupCategory> = {
-  formulation: "formulation",
+const MISSING_TAB: Record<string, LibraryCategory> = {
   phytochemical: "phytochemicals",
   protein: "proteins",
   "cell line": "cell-line",
 }
 
-interface ResearchSetupProps {
+export interface ResearchSetupProps {
   title: string
   tab: string
   readiness: StudyReadiness | null
   checkError: string | null
   checking: boolean
   missing: string[]
-  onTab: (tab: string) => void
-  onContinue: () => void
-  onChanged: () => void
+  onTabAction?: (tab: string) => void
+  onContinueAction?: () => void
+  onChangedAction?: () => void
 }
 
 export function ResearchSetup({
@@ -77,17 +72,19 @@ export function ResearchSetup({
   checkError,
   checking,
   missing,
-  onTab,
-  onContinue,
-  onChanged,
+  onTabAction,
+  onContinueAction,
+  onChangedAction,
 }: ResearchSetupProps) {
-  const reviewing = tab === "review"
+  const handleTab = onTabAction ?? (() => {})
+  const handleContinue = onContinueAction ?? (() => {})
+  const handleChanged = onChangedAction ?? (() => {})
   const activeIndex = Math.max(0, SECTIONS.findIndex((section) => section.id === tab))
-  const active = reviewing ? null : SECTIONS[activeIndex]
-  const previous = reviewing ? SECTIONS[SECTIONS.length - 1] : activeIndex > 0 ? SECTIONS[activeIndex - 1] : null
-  const next = reviewing ? null : activeIndex < SECTIONS.length - 1 ? SECTIONS[activeIndex + 1] : null
+  const active = SECTIONS[activeIndex]
+  const previous = activeIndex > 0 ? SECTIONS[activeIndex - 1] : null
+  const next = activeIndex < SECTIONS.length - 1 ? SECTIONS[activeIndex + 1] : null
   const readyCount = SECTIONS.filter((section) => (readiness?.[section.countKey] ?? 0) > 0).length
-  const complete = readyCount === 4
+  const complete = readyCount === SECTIONS.length
   const continueDisabled = checking || !readiness || missing.length > 0 || Boolean(checkError)
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
 
@@ -106,54 +103,58 @@ export function ResearchSetup({
             ? Math.min(index + 1, last)
             : Math.max(index - 1, 0)
     tabRefs.current[target]?.focus()
-    onTab(SECTIONS[target].id)
+    handleTab(SECTIONS[target].id)
   }
 
   return (
     <div className="nano-setup">
-      <header className="nano-setup-intro">
-        <div className="min-w-0">
-          <p className="nano-setup-kicker">01 · Research Setup</p>
-          <div className="mt-1.5 flex flex-wrap items-center gap-2">
-            <h1 className="nano-setup-title">{title}</h1>
-            <span className="nano-study-status" data-status={complete ? "active" : "draft"}>
-              {complete ? "Completed" : "In Progress"}
-            </span>
+      <header className="nano-setup-intro nano-setup-intro--compact">
+        <div className="nano-setup-intro-copy">
+          <span className="nano-setup-mark" aria-hidden>
+            <FlaskConical size={18} strokeWidth={1.85} />
+          </span>
+          <div>
+            <p className="nano-setup-kicker">01 · Research Setup</p>
+            <div className="nano-setup-intro-line">
+              <h1 className="nano-setup-title">{title}</h1>
+              <span className="nano-study-status" data-status={complete ? "active" : "draft"}>
+                {complete ? "Completed" : "In progress"}
+              </span>
+            </div>
+            <AskAiLink context="setup" />
           </div>
-          <p className="nano-setup-lead">
-            Define formulations, then select phytochemicals, target proteins, and cell lines for this study.
-            Nothing is added until you save it here.
-          </p>
-          <p className="nano-setup-note">Computational outputs do not constitute experimental proof.</p>
         </div>
         <div className="nano-setup-progress" aria-live="polite">
-          <p className="nano-setup-progress-label">Research Setup</p>
+          <ul className="nano-setup-pips" aria-hidden>
+            {SECTIONS.map((section, index) => {
+              const Icon = section.icon
+              const on = Boolean(readiness && readiness[section.countKey] > 0)
+              return (
+                <li
+                  key={section.id}
+                  data-on={on ? "true" : "false"}
+                  data-tone={section.id}
+                  style={{ animationDelay: `${90 + index * 70}ms` }}
+                >
+                  <Icon size={14} strokeWidth={1.9} />
+                </li>
+              )
+            })}
+          </ul>
           <p className="nano-setup-progress-value">
             {readiness ? (
               <>
-                <span>{readyCount}</span>
-                <span>of 4</span>
+                <span key={readyCount}>{readyCount}</span>
+                <span>of {SECTIONS.length}</span>
               </>
             ) : (
               "Checking"
             )}
           </p>
-          <div className="nano-setup-meter" aria-hidden>
-            {SECTIONS.map((section) => (
-              <span key={section.id} data-on={readiness && readiness[section.countKey] > 0 ? "true" : "false"} />
-            ))}
-          </div>
-          <p className="nano-setup-progress-hint">
-            {readiness
-              ? complete
-                ? "Completed — ready for in-silico screening"
-                : `${4 - readyCount} still needed`
-              : "Loading study records"}
-          </p>
         </div>
       </header>
 
-      <div className="nano-setup-steps" role="tablist" aria-label="Research setup sections">
+      <div className="nano-setup-steps nano-setup-steps--rail" role="tablist" aria-label="Research setup sections">
         {SECTIONS.map((section, index) => {
           const count = readiness ? readiness[section.countKey] : null
           const done = count !== null && count > 0
@@ -175,102 +176,88 @@ export function ResearchSetup({
               className="nano-setup-step"
               data-current={selected ? "true" : undefined}
               data-state={state}
+              data-tone={section.id}
               style={{ animationDelay: `${40 + index * 45}ms` }}
-              onClick={() => onTab(section.id)}
+              onClick={() => handleTab(section.id)}
               onKeyDown={(event) => onTabKeyDown(event, index)}
             >
-              <span className="nano-setup-step-top">
-                <span className="nano-setup-glyph" aria-hidden>
-                  {done && !selected ? <Check size={15} strokeWidth={2.5} /> : <Icon size={15} strokeWidth={1.85} />}
-                </span>
-                <span className="nano-setup-num">{section.number}</span>
+              <span className="nano-setup-glyph" aria-hidden>
+                {done && !selected ? <Check size={15} strokeWidth={2.5} /> : <Icon size={15} strokeWidth={1.85} />}
               </span>
-              <span className="nano-setup-step-label">{section.label}</span>
-              <span className="nano-setup-step-hint">{section.hint}</span>
+              <span className="nano-setup-step-copy">
+                <span className="nano-setup-num">{section.number}</span>
+                <span className="nano-setup-step-label">{section.label}</span>
+                <span className="nano-setup-step-hint">{section.hint}</span>
+              </span>
               <span className="nano-setup-step-meta">
-                {count === null ? "Checking" : done ? `${count} recorded` : "Needed"}
+                {count === null ? "Checking" : done ? `${count} selected` : "0 selected"}
               </span>
             </button>
           )
         })}
       </div>
 
-      {complete && !reviewing ? (
-        <SetupReview readiness={readiness} onManage={onTab} />
-      ) : null}
+      {active.id === "phytochemicals" ? (
+        <section id="setup-stage" role="tabpanel" aria-labelledby={`setup-step-${active.id}`} className="nano-setup-stage">
+          <PhytochemicalBrowser onChangedAction={handleChanged} onContinueAction={() => handleTab("proteins")} />
+        </section>
+      ) : active.id === "proteins" ? (
+        <section id="setup-stage" role="tabpanel" aria-labelledby={`setup-step-${active.id}`} className="nano-setup-stage">
+          <ProteinBrowser
+            onChangedAction={handleChanged}
+            onBackAction={() => handleTab("phytochemicals")}
+            onContinueAction={() => handleTab("cell-line")}
+          />
+        </section>
+      ) : active.id === "cell-line" ? (
+        <section id="setup-stage" role="tabpanel" aria-labelledby={`setup-step-${active.id}`} className="nano-setup-stage">
+          <CellLineBrowser
+            onChangedAction={handleChanged}
+            onBackAction={() => handleTab("proteins")}
+            onContinueAction={handleContinue}
+            continueDisabled={continueDisabled}
+          />
+        </section>
+      ) : (
+        <>
+          <SetupActions
+            checkError={checkError}
+            readiness={readiness}
+            missing={missing}
+            previous={previous}
+            next={next}
+            checking={checking}
+            continueDisabled={continueDisabled}
+            onTabAction={handleTab}
+            onContinueAction={handleContinue}
+            showStatus
+          />
 
-      <SetupActions
-        checkError={checkError}
-        readiness={readiness}
-        missing={missing}
-        previous={previous}
-        next={next}
-        reviewing={reviewing}
-        checking={checking}
-        continueDisabled={continueDisabled}
-        onTab={onTab}
-        onContinue={onContinue}
-        showStatus
-      />
+          <section
+            id="setup-stage"
+            role="tabpanel"
+            aria-labelledby={`setup-step-${active.id}`}
+            className="nano-setup-stage nano-step-in"
+            key={tab}
+          >
+            <LibrarySelection category={active.id} onChangedAction={handleChanged} />
+          </section>
 
-      <section
-        id="setup-stage"
-        role="tabpanel"
-        aria-labelledby={active ? `setup-step-${active.id}` : undefined}
-        className="nano-setup-stage nano-step-in"
-        key={tab}
-      >
-        {reviewing || !active ? (
-          <SetupReview readiness={readiness} onManage={onTab} />
-        ) : (
-          <SetupRecords category={active.id} onChanged={onChanged} />
-        )}
-      </section>
-
-      <SetupActions
-        checkError={checkError}
-        readiness={readiness}
-        missing={missing}
-        previous={previous}
-        next={next}
-        reviewing={reviewing}
-        checking={checking}
-        continueDisabled={continueDisabled}
-        onTab={onTab}
-        onContinue={onContinue}
-      />
+          <SetupActions
+            checkError={checkError}
+            readiness={readiness}
+            missing={missing}
+            previous={previous}
+            next={next}
+            checking={checking}
+            continueDisabled={continueDisabled}
+            onTabAction={handleTab}
+            onContinueAction={handleContinue}
+            isBottom
+          />
+        </>
+      )}
     </div>
-  )
-}
-
-function SetupReview({
-  readiness,
-  onManage,
-}: {
-  readiness: StudyReadiness | null
-  onManage: (tab: string) => void
-}) {
-  const readyCount = SECTIONS.filter((section) => (readiness?.[section.countKey] ?? 0) > 0).length
-  return (
-    <section className="nano-setup-review" aria-label="Research setup review">
-      <h2>Research Setup — {readiness ? `${readyCount} of 4` : "Checking"} {readyCount === 4 ? "completed" : "in progress"}</h2>
-      <ul>
-        {SECTIONS.map((section) => {
-          const count = readiness ? readiness[section.countKey] : null
-          return (
-            <li key={section.id}>
-              <span>
-                {section.label}
-                <strong>{count === null ? "—" : `${count} records`}</strong>
-              </span>
-              <button type="button" onClick={() => onManage(section.id)}>
-                {count ? "Edit" : "Add"}
-              </button>
-            </li>
-          )
-        })}
-      </ul>
-    </section>
   )
 }
 
@@ -280,27 +267,27 @@ function SetupActions({
   missing,
   previous,
   next,
-  reviewing,
   checking,
   continueDisabled,
-  onTab,
-  onContinue,
+  onTabAction,
+  onContinueAction,
   showStatus = false,
+  isBottom = false,
 }: {
   checkError: string | null
   readiness: StudyReadiness | null
   missing: string[]
   previous: SetupSection | null
   next: SetupSection | null
-  reviewing: boolean
   checking: boolean
   continueDisabled: boolean
-  onTab: (tab: string) => void
-  onContinue: () => void
+  onTabAction?: (tab: string) => void
+  onContinueAction?: () => void
   showStatus?: boolean
+  isBottom?: boolean
 }) {
   return (
-    <div className="nano-setup-bar">
+    <div className={`nano-setup-bar ${isBottom ? "nano-setup-bar--bottom" : ""}`}>
       {showStatus ? (
         <div className="nano-setup-bar-status">
           {checkError ? (
@@ -318,7 +305,7 @@ function SetupActions({
                   return (
                     <li key={line}>
                       {target ? (
-                        <button type="button" onClick={() => onTab(target)}>
+                        <button type="button" onClick={() => onTabAction?.(target)}>
                           {line}
                         </button>
                       ) : (
@@ -330,7 +317,7 @@ function SetupActions({
               </ul>
             </div>
           ) : readiness ? (
-            <p role="status">All four setup categories are complete.</p>
+            <p role="status">All three selections are complete.</p>
           ) : null}
         </div>
       ) : (
@@ -340,23 +327,18 @@ function SetupActions({
       )}
       <div className="nano-setup-bar-actions">
         {previous ? (
-          <button type="button" className="nano-setup-back" onClick={() => onTab(previous.id)}>
+          <button type="button" className="nano-setup-back" onClick={() => onTabAction?.(previous.id)}>
             <ArrowLeft size={15} aria-hidden />
             {previous.label}
           </button>
         ) : null}
         {next ? (
-          <button type="button" className="nano-setup-next" onClick={() => onTab(next.id)}>
+          <button type="button" className="nano-setup-next" onClick={() => onTabAction?.(next.id)}>
             Next step
             <ArrowRight size={15} aria-hidden />
           </button>
-        ) : !reviewing ? (
-          <button type="button" className="nano-setup-next" onClick={() => onTab("review")}>
-            Review setup
-            <ArrowRight size={15} aria-hidden />
-          </button>
         ) : null}
-        <button type="button" className="nano-setup-continue" disabled={continueDisabled} onClick={onContinue}>
+        <button type="button" className="nano-setup-continue" disabled={continueDisabled} onClick={onContinueAction}>
           {checking ? "Checking…" : "Continue to In-Silico"}
           <ArrowRight size={15} aria-hidden />
         </button>

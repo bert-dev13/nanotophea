@@ -8,7 +8,7 @@ import { assessCompatibility } from "../comparison/compatibility"
 import { EvidenceTypeSchema } from "../domain/provenance"
 import type { LabDataset, PredictionRun } from "../domain/models"
 import { toUserFacingError } from "../errors/userFacing"
-import { studySub, STUDY_SUBCOLLECTIONS } from "../firebase/paths"
+import { studySub, STUDY_SUBCOLLECTIONS } from "../domain/paths"
 import {
   canEditComparisons,
   canEditInterpretations,
@@ -22,7 +22,7 @@ import {
   formatStatNumber,
   INFINITE_STAT_SENTINEL,
   isInfiniteStatDisplay,
-  toFirestoreStatNumber,
+  toDatabaseStatNumber,
 } from "../statistics/statDisplay"
 
 function pred(over: Partial<PredictionRun> = {}): PredictionRun {
@@ -68,6 +68,7 @@ function lab(over: Partial<LabDataset> = {}): LabDataset {
     datePerformed: "2026-01-02",
     protocolReference: "kit protocol",
     treatmentSummaries: [],
+    observations: [],
     outsourcedLab: false,
     status: "draft",
     provenance: { evidenceClass: "EXPERIMENTAL", laboratoryName: "DMBEL" },
@@ -86,6 +87,7 @@ describe("evidence-class enforcement", () => {
       "LITERATURE",
       "PREDICTED",
       "EXPERIMENTAL",
+      "SYNTHETIC",
       "INTERPRETATION",
       "SIMULATION",
     ] as const) {
@@ -104,8 +106,8 @@ describe("evidence-class enforcement", () => {
 })
 
 describe("permissions matrix", () => {
-  it("OWNER and COLLABORATOR can author; ADVISER and VIEWER are read-only", () => {
-    for (const role of ["OWNER", "COLLABORATOR"] as const) {
+  it("the signed-in account can author every study record", () => {
+    for (const role of ["OWNER", "COLLABORATOR", "ADVISER", "VIEWER", null] as const) {
       assert.equal(canEditResearchData(role), true)
       assert.equal(canEditScientificRuns(role), true)
       assert.equal(canEditLabData(role), true)
@@ -113,15 +115,6 @@ describe("permissions matrix", () => {
       assert.equal(canEditComparisons(role), true)
       assert.equal(canEditInterpretations(role), true)
     }
-    for (const role of ["ADVISER", "VIEWER"] as const) {
-      assert.equal(canEditResearchData(role), false)
-      assert.equal(canEditScientificRuns(role), false)
-      assert.equal(canEditLabData(role), false)
-      assert.equal(canEditStatistics(role), false)
-      assert.equal(canEditComparisons(role), false)
-      assert.equal(canEditInterpretations(role), false)
-    }
-    assert.equal(canEditResearchData(null), false)
   })
 })
 
@@ -190,7 +183,7 @@ describe("LDH unit compatibility", () => {
 
 describe("infinite statistical sentinel", () => {
   it("stores Infinity as MAX_VALUE sentinel and displays as ∞", () => {
-    assert.equal(toFirestoreStatNumber(Infinity), INFINITE_STAT_SENTINEL)
+    assert.equal(toDatabaseStatNumber(Infinity), INFINITE_STAT_SENTINEL)
     assert.equal(isInfiniteStatDisplay(INFINITE_STAT_SENTINEL), true)
     assert.equal(formatStatNumber(INFINITE_STAT_SENTINEL), "∞")
     assert.equal(formatStatNumber(1.2345), "1.2345")
@@ -199,13 +192,13 @@ describe("infinite statistical sentinel", () => {
 })
 
 describe("user-facing errors", () => {
-  it("maps Firebase permission/unavailable without stack traces", () => {
+  it("maps database permission/unavailable without stack traces", () => {
     assert.match(
       toUserFacingError({
         code: "permission-denied",
         message: "Missing or insufficient permissions.",
       }),
-      /Administrator access|ownership record/i
+      /could not be opened|Sign in/i
     )
     assert.match(
       toUserFacingError({ code: "unavailable", message: "offline" }),

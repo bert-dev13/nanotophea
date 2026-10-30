@@ -3,42 +3,31 @@
 import { useEffect, useId, useRef, useState } from "react"
 import { Check, ChevronDown, FolderOpen, Plus } from "lucide-react"
 import { useStudy } from "@/components/providers/StudyProvider"
+import { NewStudyModal } from "@/components/study/NewStudyModal"
 import type { StudyStatus } from "@/lib/domain/models"
 
 const STATUS_TONE: Record<StudyStatus, { color: string; bg: string }> = {
   draft: { color: "#475569", bg: "#f1f5f9" },
   active: { color: "#0f766e", bg: "#ccfbf1" },
   analysis: { color: "#c2410c", bg: "#ffedd5" },
+  completed: { color: "#166534", bg: "#dcfce7" },
   archived: { color: "#64748b", bg: "#f8fafc" },
 }
 
 export function StudySelector() {
-  const { studies, activeStudy, membership, createNewStudy, selectStudy, updateActiveStudy, loading } =
-    useStudy()
+  const { studies, activeStudy, selectStudy, updateActiveStudy, loading } = useStudy()
   const [open, setOpen] = useState(false)
   const [creating, setCreating] = useState(false)
-  const [title, setTitle] = useState("NanoHepatoTea SIP 2026")
-  const [busy, setBusy] = useState(false)
-  const [msg, setMsg] = useState<string | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const menuId = useId()
-  const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!open) return
     const onPointer = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) {
-        setOpen(false)
-        setCreating(false)
-        setMsg(null)
-      }
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setOpen(false)
-        setCreating(false)
-        setMsg(null)
-      }
+      if (e.key === "Escape") setOpen(false)
     }
     document.addEventListener("mousedown", onPointer)
     document.addEventListener("keydown", onKey)
@@ -48,40 +37,6 @@ export function StudySelector() {
     }
   }, [open])
 
-  useEffect(() => {
-    if (creating) inputRef.current?.focus()
-  }, [creating])
-
-  const closeAll = () => {
-    setOpen(false)
-    setCreating(false)
-    setMsg(null)
-  }
-
-  const openCreate = () => {
-    setOpen(true)
-    setCreating(true)
-    setMsg(null)
-  }
-
-  const onCreate = async () => {
-    setBusy(true)
-    setMsg(null)
-    try {
-      await createNewStudy({
-        title: title.trim() || "Untitled study",
-        shortTitle: "NanoHepatoTea",
-        description: "In silico + experimental assessment of NanoHepatoTea against HepG2.",
-        fairYear: "2026",
-      })
-      closeAll()
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : "Create failed")
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const studyLabel = activeStudy?.title || (loading ? "Loading…" : "Select study")
   const tone = activeStudy ? STATUS_TONE[activeStudy.status] : null
 
@@ -90,21 +45,14 @@ export function StudySelector() {
       <button
         type="button"
         className={`nano-study-trigger nano-menu-trigger group inline-flex h-9 max-w-[min(100%,17rem)] sm:max-w-[22rem] md:max-w-[26rem] items-center gap-2 rounded-xl px-2.5 text-left ${
-          open && !creating ? "nano-study-trigger--open" : ""
+          open ? "nano-study-trigger--open" : ""
         }`}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={menuId}
         aria-label={`Active study: ${studyLabel}`}
         disabled={loading}
-        onClick={() => {
-          if (open && !creating) closeAll()
-          else {
-            setCreating(false)
-            setMsg(null)
-            setOpen(true)
-          }
-        }}
+        onClick={() => setOpen((value) => !value)}
       >
         <span className="nano-study-icon shrink-0" aria-hidden>
           <FolderOpen size={14} strokeWidth={2} />
@@ -115,8 +63,7 @@ export function StudySelector() {
           </span>
           <span className="mt-0.5 flex items-center gap-1.5">
             <span
-              className="truncate text-[12.5px] font-semibold leading-tight"
-              style={{ color: activeStudy ? "#0f172a" : "#94a3b8" }}
+              className="truncate text-[12.5px] font-semibold leading-tight text-[var(--foreground)]"
             >
               {studyLabel}
             </span>
@@ -132,8 +79,8 @@ export function StudySelector() {
         </span>
         <ChevronDown
           size={14}
-          className={`shrink-0 text-slate-400 transition-transform duration-150 ${
-            open && !creating ? "rotate-180 text-teal-700" : ""
+          className={`shrink-0 text-[var(--muted-foreground)] transition-transform duration-150 ${
+            open ? "rotate-180 text-teal-600 dark:text-teal-400" : ""
           }`}
           aria-hidden
         />
@@ -144,7 +91,10 @@ export function StudySelector() {
         className={`nano-new-study shrink-0 ${creating ? "nano-new-study--active" : ""}`}
         aria-label="New study"
         title="New study"
-        onClick={openCreate}
+        onClick={() => {
+          setOpen(false)
+          setCreating(true)
+        }}
       >
         <Plus size={15} strokeWidth={2.25} />
         <span className="hidden md:inline">New</span>
@@ -155,50 +105,11 @@ export function StudySelector() {
           id={menuId}
           role="listbox"
           aria-label="Studies"
-          className="nano-dropdown absolute left-0 top-full z-50 mt-2 w-[min(100vw-1.5rem,21rem)] overflow-hidden rounded-xl border border-teal-100 bg-white"
+          className="nano-dropdown absolute left-0 top-full z-50 mt-2 w-[min(100vw-1.5rem,21rem)] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] text-[var(--card-foreground)] backdrop-blur-xl shadow-2xl"
         >
-          {creating ? (
-            <div className="space-y-2.5 p-3.5">
-              <p className="text-[12px] font-semibold text-slate-900">New study</p>
-              <input
-                ref={inputRef}
-                className="nano-control w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[13px] outline-none"
-                value={title}
-                placeholder="Study title"
-                aria-label="Study title"
-                onChange={(e) => setTitle(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void onCreate()
-                }}
-              />
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void onCreate()}
-                  className="flex-1 rounded-lg bg-teal-700 px-2.5 py-2 text-xs font-semibold text-white transition-[filter] duration-150 hover:brightness-105 disabled:opacity-60"
-                >
-                  {busy ? "Creating…" : "Create"}
-                </button>
-                <button
-                  type="button"
-                  className="rounded-lg px-2.5 py-2 text-xs font-medium text-slate-500 transition-colors duration-150 hover:bg-slate-50"
-                  onClick={() => {
-                    setCreating(false)
-                    setMsg(null)
-                    if (studies.length === 0) closeAll()
-                  }}
-                >
-                  Cancel
-                </button>
-              </div>
-              {msg ? <p className="text-[11px] text-red-700">{msg}</p> : null}
-            </div>
-          ) : (
-            <>
-              <div className="max-h-56 overflow-y-auto py-1.5">
+          <div className="max-h-56 overflow-y-auto py-1.5">
                 {studies.length === 0 ? (
-                  <p className="px-3.5 py-3 text-xs text-slate-400">
+                  <p className="px-3.5 py-3 text-xs text-[var(--muted-foreground)]">
                     No studies yet. Create one to begin.
                   </p>
                 ) : (
@@ -210,15 +121,15 @@ export function StudySelector() {
                         type="button"
                         role="option"
                         aria-selected={selected}
-                        className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-[12.5px] transition-colors duration-150 hover:bg-teal-50/80"
+                        className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-[12.5px] transition-colors duration-150 hover:bg-[var(--surface-secondary)]"
                         style={{
-                          color: selected ? "#0f172a" : "#64748b",
-                          background: selected ? "#f0fdfa" : undefined,
-                          fontWeight: selected ? 600 : 500,
+                          color: selected ? "var(--foreground)" : "var(--muted-foreground)",
+                          background: selected ? "rgba(20, 184, 166, 0.15)" : undefined,
+                          fontWeight: selected ? 650 : 500,
                         }}
                         onClick={() => {
                           void selectStudy(s.id)
-                          closeAll()
+                          setOpen(false)
                         }}
                       >
                         <span className="min-w-0 flex-1 truncate">{s.title}</span>
@@ -231,25 +142,25 @@ export function StudySelector() {
                         >
                           {s.status}
                         </span>
-                        {selected ? <Check size={13} className="shrink-0 text-teal-700" aria-hidden /> : null}
+                        {selected ? <Check size={13} className="shrink-0 text-teal-600 dark:text-teal-400" aria-hidden /> : null}
                       </button>
                     )
                   })
                 )}
               </div>
 
-              {activeStudy && membership?.role === "OWNER" ? (
-                <div className="border-t border-teal-50 px-3.5 py-2.5">
-                  <label className="flex items-center justify-between gap-3 text-[11px] font-medium text-slate-500">
+              {activeStudy ? (
+                <div className="border-t border-[var(--border)] px-3.5 py-2.5">
+                  <label className="flex items-center justify-between gap-3 text-[11px] font-medium text-[var(--muted-foreground)]">
                     Status
                     <select
-                      className="nano-control rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] capitalize outline-none"
+                      className="nano-control rounded-lg border border-[var(--input-border)] bg-[var(--input-bg)] text-[var(--foreground)] px-2 py-1.5 text-[11px] capitalize outline-none"
                       value={activeStudy.status}
                       onChange={(e) =>
                         void updateActiveStudy({ status: e.target.value as StudyStatus })
                       }
                     >
-                      {(["draft", "active", "analysis", "archived"] as StudyStatus[]).map((s) => (
+                      {(["draft", "active", "analysis", "completed", "archived"] as StudyStatus[]).map((s) => (
                         <option key={s} value={s}>
                           {s}
                         </option>
@@ -258,10 +169,9 @@ export function StudySelector() {
                   </label>
                 </div>
               ) : null}
-            </>
-          )}
         </div>
       ) : null}
+      <NewStudyModal open={creating} onClose={() => setCreating(false)} />
     </div>
   )
 }

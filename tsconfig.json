@@ -29,6 +29,7 @@
     "data/**/*.ts",
     "lib/**/*.ts",
     "lib/**/*.tsx",
+    "services/**/*.ts",
     "types/**/*.ts",
     "next.config.ts",
     ".next/types/**/*.ts"

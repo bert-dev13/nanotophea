@@ -1,6 +1,5 @@
 "use client"
 
-import Image from "next/image"
 import Link from "next/link"
 
 export const NANO_LOGO_SRC = "/nano-logo.png"
@@ -30,12 +29,12 @@ export function BrandLogo({
   const s = SIZE[size]
   return (
     <span className={`inline-flex shrink-0 items-center justify-center ${s.className} ${className}`}>
-      <Image
+      <img
         src={NANO_LOGO_SRC}
         alt={NANO_LOGO_ALT}
         width={s.w}
         height={s.h}
-        priority={priority}
+        decoding={priority ? "sync" : "async"}
         className="h-full w-full object-contain"
       />
     </span>

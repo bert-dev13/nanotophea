@@ -1,46 +1,24 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
-import {
-  AlertTriangle,
-  GitCompare,
-  Save,
-  Trash2,
-} from "lucide-react"
-import {
-  CartesianGrid,
-  ErrorBar,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-  Bar,
-  BarChart,
-  Legend,
-} from "recharts"
-import { ModuleShell } from "@/components/ui/ModuleShell"
-import { EvidenceBadge } from "@/components/ui/EvidenceBadge"
-import { useAuth } from "@/components/providers/AuthProvider"
-import { useStudy } from "@/components/providers/StudyProvider"
-import { canEditComparisons, comparisonRoleLabel } from "@/lib/permissions/researchAccess"
-import { toUserFacingError } from "@/lib/errors/userFacing"
-import { ResearchEmptyState } from "@/components/research/ResearchEmptyState"
-import { ConfirmDeleteDialog } from "@/components/research/ConfirmDeleteDialog"
-import { FormField, inputClass, inputStyle, textareaClass } from "@/components/research/FormFields"
-import { getLabAssayConfig } from "@/lib/lab/labAssayConfig"
-import { getPredictionEndpoint } from "@/lib/insilico/predictionEndpoints"
-import { listLabDatasets } from "@/lib/repositories/labRepository"
-import { listPredictionRuns } from "@/lib/repositories/scientificRunRepository"
-import { listStatisticsAnalyses } from "@/lib/repositories/statisticsRepository"
-import {
-  createComparison,
-  deleteComparison,
-  listComparisons,
-  previewComparison,
-  updateComparison,
-} from "@/lib/repositories/comparisonRepository"
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+
+
+import { listComparisons, createComparison, deleteComparison, previewComparison, updateComparison } from "@/lib/repositories/comparisonRepository";
+import { listLabDatasets } from "@/lib/repositories/labRepository";
+import { listPredictionRuns } from "@/lib/repositories/scientificRunRepository";
+import { listStatisticsAnalyses } from "@/lib/repositories/statisticsRepository";
+import { getPredictionEndpoint } from "@/lib/insilico/predictionEndpoints";
+import { getLabAssayConfig } from "@/lib/lab/labAssayConfig";
+import { useAuth } from "@/components/providers/AuthProvider";
+import { useStudy } from "@/components/providers/StudyProvider";
+import { canEditComparisons } from "@/lib/permissions/researchAccess";
+import { toUserFacingError } from "@/lib/errors/userFacing";
+import { ResearchEmptyState } from "@/components/research/ResearchEmptyState";
+import { ConfirmDeleteDialog } from "@/components/research/ConfirmDeleteDialog";
+import { FormField, inputClass, inputStyle, textareaClass } from "@/components/research/FormFields";
+import { EvidenceBadge } from "@/components/ui/EvidenceBadge";
+import { AlertTriangle, Save, Trash2 } from "lucide-react";
+import { ResponsiveContainer, LineChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Line, BarChart, Bar, ErrorBar } from "recharts";
 import type {
   ComparisonRecord,
   LabDataset,
@@ -49,8 +27,6 @@ import type {
 } from "@/lib/domain/models"
 import type { ComparisonComputation } from "@/lib/comparison/runComparison"
 import {
-  COMPARISON_CALCULATION_METHOD,
-  COMPARISON_CALCULATION_VERSION,
   expChartPoints,
   predChartPoints,
   predictionUnitLabel,
@@ -69,12 +45,12 @@ function statusStyle(status: string): { bg: string; border: string; color: strin
   return { bg: "#fef2f2", border: "#fecaca", color: "#991b1b" }
 }
 
-export function ComparisonWorkspace() {
+export function ComparisonWorkspace({ forcedEndpoint, hideSelectors }: { forcedEndpoint?: string; hideSelectors?: boolean } = {}) {
   const { user } = useAuth()
   const { activeStudy, membership, loading: studyLoading } = useStudy()
   const canEdit = canEditComparisons(membership?.role)
 
-  const [endpoint, setEndpoint] = useState<Endpoint>("dpph")
+  const [endpoint, setEndpoint] = useState<Endpoint>((forcedEndpoint as Endpoint) ?? "dpph")
   const [predictions, setPredictions] = useState<PredictionRun[]>([])
   const [datasets, setDatasets] = useState<LabDataset[]>([])
   const [statsList, setStatsList] = useState<StatisticsRecord[]>([])
@@ -95,6 +71,7 @@ export function ComparisonWorkspace() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [simulationOnly, setSimulationOnly] = useState<string[]>([])
 
   const predCfg = useMemo(() => getPredictionEndpoint(endpoint), [endpoint])
   const labCfg = useMemo(() => getLabAssayConfig(endpoint), [endpoint])
@@ -122,6 +99,31 @@ export function ComparisonWorkspace() {
     if (!activeStudy) return
     void refresh().catch((e) => setError(toUserFacingError(e, "Load failed")))
   }, [activeStudy, refresh])
+
+  useEffect(() => {
+    if (!activeStudy) return
+    const labels: Record<string, string> = {
+      mtt: "MTT",
+      ros: "ROS",
+      bax: "BAX",
+      hippo_yap: "Hippo–YAP",
+    }
+    void listPredictionRuns(activeStudy.id).then((runs) => {
+      setSimulationOnly(
+        Object.entries(labels)
+          .filter(([id]) => runs.some((run) => (run.endpoint || run.module) === id))
+          .map(([, label]) => label),
+      )
+    })
+  }, [activeStudy])
+
+  useEffect(() => {
+    if (!predictionId && predictions[0]) setPredictionId(predictions[0].id)
+  }, [predictions, predictionId])
+
+  useEffect(() => {
+    if (!datasetId && datasets[0]) setDatasetId(datasets[0].id)
+  }, [datasets, datasetId])
 
   useEffect(() => {
     setPredictionId("")
@@ -250,29 +252,28 @@ export function ComparisonWorkspace() {
     })) ?? []
 
   return (
-    <ModuleShell
-      icon={GitCompare}
-      title="Prediction vs Experimental"
-      subtitle="Transparent side-by-side comparison for DPPH and LDH only — never automatic validation."
-      evidence={["PREDICTED", "EXPERIMENTAL"]}
-      phase="analysis"
-      contractNote="Never auto-label concordance as proven validation. MTT / ROS / BAX / Hippo–YAP have no experimental pair in this study. No automatic µM ↔ µg/mL conversion."
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs" style={{ color: "#64748b" }}>
-        <span>{comparisonRoleLabel(membership?.role)}</span>
-        <span className="font-mono">
-          {COMPARISON_CALCULATION_METHOD} · v{COMPARISON_CALCULATION_VERSION}
+    <>
+      <header className="phyto-hero">
+        <div>
+          <p className="phyto-kicker">02 · Prediction vs Experimental</p>
+          <h2>Prediction and experiment</h2>
+          <p className="phyto-subtitle">
+            Predictions compared with experimental observations. DPPH and LDH can be
+            compared when both records exist. MTT, ROS, BAX, and Hippo–YAP stay prediction-only
+            until a laboratory dataset is recorded.
+          </p>
+        </div>
+        <span className="analysis-badge-row">
+          <EvidenceBadge type="SIMULATION" />
+          <EvidenceBadge type="EXPERIMENTAL" />
         </span>
-      </div>
+      </header>
 
-      <div
-        className="rounded-lg border px-3 py-2 text-xs leading-relaxed"
-        style={{ borderColor: "#bfdbfe", background: "#eff6ff", color: "#1e3a8a" }}
-        role="note"
-      >
-        Computational predictions and experimental measurements are distinct evidence layers.
-        Agreement does not by itself establish experimental validation of the computational method.
-      </div>
+      {simulationOnly.length > 0 ? (
+        <p className="analysis-aside">
+          No experimental validation for {simulationOnly.join(", ")}.
+        </p>
+      ) : null}
 
       {error ? (
         <div
@@ -337,7 +338,7 @@ export function ComparisonWorkspace() {
               onChange={(e) => setMetricKey(e.target.value)}
               disabled={!datasetId}
             >
-              {labCfg.measurementKeys.map((m) => (
+              {labCfg.measurementKeys.map((m: {key:string; label:string}) => (
                 <option key={m.key} value={m.key}>
                   {m.label}
                 </option>
@@ -442,6 +443,17 @@ export function ComparisonWorkspace() {
         </div>
       ) : null}
 
+      {compat && !compat.allowAlignedComparison ? (
+        <section className="analysis-unavailable" role="status">
+          <h2>Direct comparison unavailable</h2>
+          <ul>
+            {compat.reasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       {compat ? (
         <section
           className="rounded-xl border p-4 space-y-2"
@@ -449,7 +461,7 @@ export function ComparisonWorkspace() {
         >
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-bold" style={{ color: "#0d1f3c" }}>
-              Compatibility
+              {compat.allowAlignedComparison ? "Aligned comparison" : "Separate records"}
             </h2>
             <span
               className="text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded border"
@@ -738,7 +750,11 @@ export function ComparisonWorkspace() {
         </>
       ) : (
         <p className="text-sm" style={{ color: "#94a3b8" }}>
-          {busy ? "Computing…" : "Select a prediction run and experimental dataset to compare."}
+          {busy
+            ? "Loading stored results…"
+            : predictions.length === 0 || datasets.length === 0
+              ? "A comparison needs both a stored simulation and an experimental dataset for this assay."
+              : "Select a simulation and an experimental dataset."}
         </p>
       )}
 
@@ -750,7 +766,7 @@ export function ComparisonWorkspace() {
         onConfirm={() => void onDelete()}
         busy={busy}
       />
-    </ModuleShell>
+    </>
   )
 }
 

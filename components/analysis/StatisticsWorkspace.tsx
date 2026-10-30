@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   AlertTriangle,
-  BarChart3,
   RefreshCw,
   Save,
   Trash2,
@@ -18,11 +17,10 @@ import {
   XAxis,
   YAxis,
 } from "recharts"
-import { ModuleShell } from "@/components/ui/ModuleShell"
 import { EvidenceBadge } from "@/components/ui/EvidenceBadge"
 import { useAuth } from "@/components/providers/AuthProvider"
 import { useStudy } from "@/components/providers/StudyProvider"
-import { canEditStatistics, statisticsRoleLabel } from "@/lib/permissions/researchAccess"
+import { canEditStatistics } from "@/lib/permissions/researchAccess"
 import { ResearchEmptyState } from "@/components/research/ResearchEmptyState"
 import { ConfirmDeleteDialog } from "@/components/research/ConfirmDeleteDialog"
 import { FormField, inputClass, inputStyle } from "@/components/research/FormFields"
@@ -261,20 +259,18 @@ export function StatisticsWorkspace() {
   }
 
   return (
-    <ModuleShell
-      icon={BarChart3}
-      title="Statistical Analysis"
-      subtitle="One-way ANOVA and Scheffé post-hoc on Experimental DPPH and LDH raw replicates only."
-      evidence="EXPERIMENTAL"
-      phase="analysis"
-      contractNote="Statistics apply to EXPERIMENTAL datasets only (α = 0.05). Do not treat Predicted/Simulation series as wet-lab ANOVA input. Statistical significance does not decide research hypotheses or efficacy."
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs" style={{ color: "#64748b" }}>
-        <span>{statisticsRoleLabel(membership?.role)}</span>
-        <span className="font-mono">
-          {STATISTICS_CALCULATION_METHOD} · v{STATISTICS_CALCULATION_VERSION} · α = {STATISTICS_ALPHA}
-        </span>
-      </div>
+    <>
+      <header className="phyto-hero">
+        <div>
+          <p className="phyto-kicker">01 · Statistical Analysis</p>
+          <h2>Experimental datasets</h2>
+          <p className="phyto-subtitle">
+            One-way ANOVA and Scheffé use the stored DPPH and LDH replicates. α = {STATISTICS_ALPHA}.
+            A significant result does not prove efficacy or confirm the research hypothesis.
+          </p>
+        </div>
+        <EvidenceBadge type="EXPERIMENTAL" />
+      </header>
 
       {error ? (
         <div
@@ -356,7 +352,7 @@ export function StatisticsWorkspace() {
             </button>
           ) : null}
           <span className="text-[11px] self-center" style={{ color: "#94a3b8" }}>
-            Source: labDatasets only · Prediction runs excluded
+            {STATISTICS_CALCULATION_METHOD} · v{STATISTICS_CALCULATION_VERSION} · laboratory replicates only
           </span>
         </div>
       </section>
@@ -672,7 +668,7 @@ export function StatisticsWorkspace() {
               </li>
               <li>
                 Hypothesis acceptance/rejection, efficacy, and biological mechanism are{" "}
-                <strong>not</strong> decided here — those belong to Researcher Interpretation.
+                <strong>not</strong> decided here — those belong to Research AI Interpretation.
               </li>
             </ul>
           </section>
@@ -693,7 +689,7 @@ export function StatisticsWorkspace() {
         onConfirm={() => void onDelete()}
         busy={busy}
       />
-    </ModuleShell>
+    </>
   )
 }
 

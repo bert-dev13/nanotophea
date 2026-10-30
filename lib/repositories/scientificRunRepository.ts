@@ -1,56 +1,76 @@
+"use server"
+
 /**
- * Scientific run repository — ADMET, docking, prediction runs.
- * Docking: import/record actual AutoDock Vina results only — never simulate affinities.
+ * Scientific run repository — ADMET, docking, prediction runs using MySQL/MariaDB.
+ * Preserves canonical DockingPair uniqueness (study_id + compound_id + protein_id)
+ * and 1-to-many DockingRun history.
  */
 import {
+  PROTOTYPE_ADME_NOTICE,
+  PROTOTYPE_ADME_PROVIDER,
+  PROTOTYPE_ADME_SUBTITLE,
+  PROTOTYPE_ADME_VERSION,
+} from "@/lib/adme/assessmentService"
+import {
   AdmetRunSchema,
+  canonicalDockingPairDocId,
+  DockingPairSchema,
   DockingRunInputSchema,
   DockingRunSchema,
+  DOCKING_SKIP_REASON,
   PredictionRunInputSchema,
   PredictionRunSchema,
+  SkippedDockingPairSchema,
   type AdmetRun,
+  type DockingPair,
   type DockingRun,
   type DockingRunInput,
+  type SkippedDockingPair,
   type PredictionEndpoint,
   type PredictionRun,
   type PredictionRunInput,
 } from "@/lib/domain/models"
 import { resolveAdmetEvidenceClass } from "@/lib/domain/admetEvidence"
 import { defaultProvenance } from "@/lib/domain/provenance"
-import { getPredictionEndpoint } from "@/lib/insilico/predictionEndpoints"
-import { STUDY_SUBCOLLECTIONS, studySub } from "@/lib/firebase/paths"
+import { execute, query, queryOne, transaction } from "@/lib/db/mysql"
 import {
-  deleteDocData,
-  docRef,
-  getDocData,
-  listDocs,
-  setDocData,
-  updateDocData,
-} from "@/lib/firebase/firestore"
+  mapAdmetRun,
+  mapDockingPair,
+  mapDockingRun,
+  mapPredictionRun,
+  parseJson,
+} from "@/lib/repositories/mysqlMappers"
 import { writeAuditLog } from "@/lib/repositories/auditRepository"
 import {
   getCellLine,
   getCompound,
-  getFormulation,
   getProtein,
 } from "@/lib/repositories/researchDataRepository"
+import { randomUUID } from "crypto"
 
 type Actor = { id: string }
 
-function stripUndefined(obj: Record<string, unknown>) {
-  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined))
+function toJson(val: unknown): string | null {
+  if (val === undefined || val === null) return null
+  return JSON.stringify(val)
 }
+
+function generateDocId(): string {
+  return randomUUID().replace(/-/g, "").slice(0, 20)
+}
+
+// ================= ADMET / In-Silico Screening =================
 
 export async function createAdmetRun(
   studyId: string,
   actor: Actor,
   input: Partial<AdmetRun> & { compoundName?: string }
 ): Promise<AdmetRun> {
-  const ref = docRef(studySub(studyId, STUDY_SUBCOLLECTIONS.admetRuns))
+  const id = generateDocId()
   const now = new Date().toISOString()
   const evidenceClass = resolveAdmetEvidenceClass(input.provenance)
   const record = AdmetRunSchema.parse({
-    id: ref.id,
+    id,
     studyId,
     compoundId: input.compoundId,
     compoundName: input.compoundName,
@@ -77,23 +97,168 @@ export async function createAdmetRun(
     createdBy: actor.id,
     updatedBy: actor.id,
   })
-  await setDocData(studySub(studyId, STUDY_SUBCOLLECTIONS.admetRuns), ref.id, record)
+
+  await execute(
+    `INSERT INTO admet_runs (
+      id, study_id, compound_id, compound_name, tool_name, tool_version,
+      provider, provider_version, model, normalizer_version, pubchem_cid,
+      input_smiles, generated_at, pubchem_retrieved, lipinski_overall,
+      descriptors, raw, status, assessment_origin, provenance, notes,
+      created_at, updated_at, created_by, updated_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      record.id,
+      studyId,
+      record.compoundId ?? null,
+      record.compoundName ?? null,
+      record.toolName ?? null,
+      record.toolVersion ?? null,
+      record.provider ?? null,
+      record.providerVersion ?? null,
+      record.model ?? null,
+      record.normalizerVersion ?? null,
+      record.pubchemCid ?? null,
+      record.inputSmiles ?? null,
+      record.generatedAt ?? null,
+      record.pubchemRetrieved !== undefined ? (record.pubchemRetrieved ? 1 : 0) : null,
+      record.lipinskiOverall ?? null,
+      toJson(record.descriptors),
+      toJson(record.raw),
+      record.status,
+      record.assessmentOrigin ?? null,
+      toJson(record.provenance),
+      record.notes ?? null,
+      record.createdAt,
+      record.updatedAt,
+      record.createdBy,
+      record.updatedBy,
+    ]
+  )
+
   await writeAuditLog({
     studyId,
     actorId: actor.id,
     action: "admetRun.create",
     entityType: "admetRun",
-    entityId: ref.id,
+    entityId: id,
   })
+
+  return record
+}
+
+export async function savePrototypeAdmeRun(
+  studyId: string,
+  actor: Actor,
+  input: {
+    compoundId: string
+    compoundName: string
+    pubchemCid: number
+    smiles?: string
+    pubchemRetrieved?: boolean
+    lipinskiOverall: "pass" | "fail" | "incomplete"
+    descriptors: Record<string, string | number | boolean | null>
+  }
+): Promise<AdmetRun> {
+  const existingRow = await queryOne(
+    `SELECT * FROM admet_runs WHERE study_id = ? AND compound_id = ?`,
+    [studyId, input.compoundId]
+  )
+  const existing = existingRow ? mapAdmetRun(existingRow) : null
+  const now = new Date().toISOString()
+  const refId = existing?.id || generateDocId()
+
+  const record = AdmetRunSchema.parse({
+    id: refId,
+    studyId,
+    compoundId: input.compoundId,
+    compoundName: input.compoundName,
+    toolName: PROTOTYPE_ADME_PROVIDER,
+    toolVersion: PROTOTYPE_ADME_VERSION,
+    provider: PROTOTYPE_ADME_PROVIDER,
+    providerVersion: PROTOTYPE_ADME_VERSION,
+    model: PROTOTYPE_ADME_SUBTITLE,
+    pubchemCid: input.pubchemCid,
+    inputSmiles: input.smiles ?? undefined,
+    generatedAt: now,
+    pubchemRetrieved: input.pubchemRetrieved,
+    lipinskiOverall: input.lipinskiOverall,
+    descriptors: input.descriptors,
+    status: "final",
+    assessmentOrigin: "calculated",
+    provenance: defaultProvenance("SIMULATION", {
+      source: PROTOTYPE_ADME_PROVIDER,
+      methodName: PROTOTYPE_ADME_SUBTITLE,
+      methodVersion: PROTOTYPE_ADME_VERSION,
+      operatorId: actor.id,
+      recordedAt: now,
+      assumptions:
+        "These values are a fixed demonstration set. They are not measurements and they are not output from a live ADME model.",
+      limitations: PROTOTYPE_ADME_NOTICE,
+    }),
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    createdBy: existing?.createdBy || actor.id,
+    updatedBy: actor.id,
+  })
+
+  await execute(
+    `INSERT INTO admet_runs (
+      id, study_id, compound_id, compound_name, tool_name, tool_version,
+      provider, provider_version, model, normalizer_version, pubchem_cid,
+      input_smiles, generated_at, pubchem_retrieved, lipinski_overall,
+      descriptors, raw, status, assessment_origin, provenance, notes,
+      created_at, updated_at, created_by, updated_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      descriptors=VALUES(descriptors), status=VALUES(status), assessment_origin=VALUES(assessment_origin),
+      provenance=VALUES(provenance), updated_at=VALUES(updated_at)`,
+    [
+      record.id,
+      studyId,
+      record.compoundId ?? null,
+      record.compoundName ?? null,
+      record.toolName ?? null,
+      record.toolVersion ?? null,
+      record.provider ?? null,
+      record.providerVersion ?? null,
+      record.model ?? null,
+      record.normalizerVersion ?? null,
+      record.pubchemCid ?? null,
+      record.inputSmiles ?? null,
+      record.generatedAt ?? null,
+      record.pubchemRetrieved !== undefined ? (record.pubchemRetrieved ? 1 : 0) : null,
+      record.lipinskiOverall ?? null,
+      toJson(record.descriptors),
+      toJson(record.raw),
+      record.status,
+      record.assessmentOrigin ?? null,
+      toJson(record.provenance),
+      record.notes ?? null,
+      record.createdAt,
+      record.updatedAt,
+      record.createdBy,
+      record.updatedBy,
+    ]
+  )
+
+  await writeAuditLog({
+    studyId,
+    actorId: actor.id,
+    action: existing ? "admetRun.update" : "admetRun.create",
+    entityType: "admetRun",
+    entityId: refId,
+  })
+
   return record
 }
 
 export async function listAdmetRuns(studyId: string): Promise<AdmetRun[]> {
-  const rows = await listDocs<AdmetRun>(studySub(studyId, STUDY_SUBCOLLECTIONS.admetRuns))
-  return rows.map((r) => AdmetRunSchema.parse(r))
+  const rows = await query(`SELECT * FROM admet_runs WHERE study_id = ? ORDER BY created_at ASC`, [studyId])
+  return rows.map(mapAdmetRun)
 }
 
-/** Validate compound + protein exist in the study; compute best affinity from modes if needed. */
+// ================= Molecular Docking =================
+
 async function validateDockingRefs(
   studyId: string,
   input: DockingRunInput
@@ -105,7 +270,6 @@ async function validateDockingRefs(
   if (!protein) throw new Error("Selected target protein was not found in this study.")
 
   const pdb = (input.receptorPdbId ?? protein.pdbId ?? "").trim()
-  if (!pdb) throw new Error("Receptor PDB ID is required (from the protein record or entered explicitly).")
 
   if (!input.modes.length) throw new Error("At least one Vina mode with affinity (kcal/mol) is required.")
 
@@ -128,7 +292,7 @@ async function validateDockingRefs(
   return {
     ligandName: input.ligandName ?? compound.name,
     ligandPubchemCid: input.ligandPubchemCid ?? compound.pubchemCid,
-    receptorPdbId: pdb,
+    receptorPdbId: pdb || undefined,
   }
 }
 
@@ -139,6 +303,103 @@ function bestAffinityFromModes(modes: DockingRunInput["modes"]): number {
   )
 }
 
+export async function getDockingPair(studyId: string, id: string): Promise<DockingPair | null> {
+  const row = await queryOne(`SELECT * FROM docking_pairs WHERE study_id = ? AND id = ?`, [studyId, id])
+  if (!row) return null
+  return mapDockingPair(row)
+}
+
+export async function listDockingPairs(studyId: string): Promise<DockingPair[]> {
+  const rows = await query(`SELECT * FROM docking_pairs WHERE study_id = ? ORDER BY created_at ASC`, [studyId])
+  return rows.map(mapDockingPair)
+}
+
+export async function upsertDockingPair(
+  studyId: string,
+  actor: Actor,
+  input: {
+    compoundId: string
+    proteinId: string
+    targetId?: string
+    compoundName?: string
+    targetName?: string
+    status?: DockingPair["status"]
+    latestRunId?: string | null
+    latestBindingAffinity?: number | null
+    runsCount?: number
+    archived?: boolean
+  }
+): Promise<DockingPair> {
+  const pairId = canonicalDockingPairDocId(input.compoundId, input.proteinId)
+  const existing = await getDockingPair(studyId, pairId)
+  const now = new Date().toISOString()
+
+  const record = DockingPairSchema.parse({
+    id: pairId,
+    studyId,
+    compoundId: input.compoundId,
+    proteinId: input.proteinId,
+    targetId: input.targetId ?? existing?.targetId ?? input.proteinId,
+    compoundName: input.compoundName ?? existing?.compoundName,
+    targetName: input.targetName ?? existing?.targetName,
+    status: input.status ?? existing?.status ?? "PENDING",
+    latestRunId: input.latestRunId !== undefined ? input.latestRunId : (existing?.latestRunId ?? null),
+    latestBindingAffinity:
+      input.latestBindingAffinity !== undefined
+        ? input.latestBindingAffinity
+        : (existing?.latestBindingAffinity ?? null),
+    runsCount: input.runsCount !== undefined ? input.runsCount : (existing?.runsCount ?? 0),
+    archived: input.archived !== undefined ? input.archived : (existing?.archived ?? false),
+    provenance: existing?.provenance || defaultProvenance("REFERENCE", { operatorId: actor.id, recordedAt: now }),
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+    createdBy: existing?.createdBy ?? actor.id,
+    updatedBy: actor.id,
+  })
+
+  await execute(
+    `INSERT INTO docking_pairs (
+      id, study_id, compound_id, protein_id, target_id, compound_name, target_name,
+      status, latest_run_id, latest_binding_affinity, runs_count, archived,
+      provenance, notes, created_at, updated_at, created_by, updated_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      target_id=VALUES(target_id), compound_name=VALUES(compound_name), target_name=VALUES(target_name),
+      status=VALUES(status), latest_run_id=VALUES(latest_run_id), latest_binding_affinity=VALUES(latest_binding_affinity),
+      runs_count=VALUES(runs_count), archived=VALUES(archived), updated_at=VALUES(updated_at), updated_by=VALUES(updated_by)`,
+    [
+      record.id,
+      studyId,
+      record.compoundId,
+      record.proteinId,
+      record.targetId ?? null,
+      record.compoundName ?? null,
+      record.targetName ?? null,
+      record.status,
+      record.latestRunId ?? null,
+      record.latestBindingAffinity ?? null,
+      record.runsCount,
+      record.archived ? 1 : 0,
+      toJson(record.provenance),
+      record.notes ?? null,
+      record.createdAt,
+      record.updatedAt,
+      record.createdBy,
+      record.updatedBy,
+    ]
+  )
+
+  await writeAuditLog({
+    studyId,
+    actorId: actor.id,
+    action: existing ? "dockingPair.update" : "dockingPair.create",
+    entityType: "dockingPair",
+    entityId: pairId,
+  })
+
+  return record
+}
+
 export async function createDockingRun(
   studyId: string,
   actor: Actor,
@@ -147,14 +408,19 @@ export async function createDockingRun(
   const input = DockingRunInputSchema.parse(rawInput)
   const refs = await validateDockingRefs(studyId, input)
 
-  const ref = docRef(studySub(studyId, STUDY_SUBCOLLECTIONS.dockingRuns))
+  const id = generateDocId()
   const now = new Date().toISOString()
-  const best =
-    input.bestBindingAffinityKcalMol ?? bestAffinityFromModes(input.modes)
+  const best = input.bestBindingAffinityKcalMol ?? bestAffinityFromModes(input.modes)
+  const pairId = canonicalDockingPairDocId(input.compoundId, input.proteinId)
+
+  // Check existing pair to calculate runs_count
+  const existingPair = await getDockingPair(studyId, pairId)
+  const nextRunsCount = (existingPair?.runsCount ?? 0) + 1
 
   const record = DockingRunSchema.parse({
     ...input,
-    id: ref.id,
+    id,
+    pairId,
     studyId,
     ligandName: refs.ligandName,
     ligandPubchemCid: refs.ligandPubchemCid,
@@ -166,7 +432,7 @@ export async function createDockingRun(
       ...input.provenance,
       evidenceClass: "PREDICTED",
       methodName: input.provenance.methodName || "AutoDock Vina",
-      methodVersion: input.vinaVersion,
+      ...(input.vinaVersion ? { methodVersion: input.vinaVersion } : {}),
       operatorId: actor.id,
       recordedAt: input.provenance.recordedAt || now,
     }),
@@ -176,27 +442,174 @@ export async function createDockingRun(
     updatedBy: actor.id,
   })
 
-  await setDocData(studySub(studyId, STUDY_SUBCOLLECTIONS.dockingRuns), ref.id, record)
+  // 1. Ensure canonical pair exists
+  await upsertDockingPair(studyId, actor, {
+    compoundId: input.compoundId,
+    proteinId: input.proteinId,
+    compoundName: refs.ligandName,
+    status: "COMPLETED",
+    latestRunId: record.id,
+    latestBindingAffinity: best,
+    runsCount: nextRunsCount,
+  })
+
+  // 2. Insert new docking run (preserves history: multiple runs under 1 pair)
+  await execute(
+    `INSERT INTO docking_runs (
+      id, study_id, pair_id, run_name, compound_id, protein_id, vina_version,
+      receptor_pdb_id, ligand_name, ligand_pubchem_cid, exhaustiveness, num_modes,
+      energy_range, search_box, modes, best_binding_affinity_kcal_mol, selected_mode,
+      interactions, interacting_residues, interaction_notes, source_file_name,
+      pose_file_name, pose_model, ligand_source, receptor_source, docking_profile_id,
+      docking_profile_version, research_target, actual_docking_receptor, structure_source,
+      structure_id, structure_method, receptor_uniprot, receptor_chains, reference_entity,
+      binding_site_source, grid_derivation, grid_center, grid_size, model_source,
+      model_version, model_confidence, binding_site_validation_method, execution_status,
+      completed_at, status, provenance, notes, created_at, updated_at, created_by, updated_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      record.id,
+      studyId,
+      pairId,
+      record.runName,
+      record.compoundId,
+      record.proteinId,
+      record.vinaVersion ?? null,
+      record.receptorPdbId ?? null,
+      record.ligandName ?? null,
+      record.ligandPubchemCid ?? null,
+      record.exhaustiveness ?? null,
+      record.numModes ?? null,
+      record.energyRange ?? null,
+      toJson(record.searchBox),
+      toJson(record.modes),
+      record.bestBindingAffinityKcalMol,
+      record.selectedMode ?? null,
+      toJson(record.interactions),
+      record.interactingResidues ?? null,
+      record.interactionNotes ?? null,
+      record.sourceFileName ?? null,
+      record.poseFileName ?? null,
+      record.poseModel ?? null,
+      record.ligandSource ?? null,
+      record.receptorSource ?? null,
+      record.dockingProfileId ?? null,
+      record.dockingProfileVersion ?? null,
+      record.researchTarget ?? null,
+      record.actualDockingReceptor ?? null,
+      record.structureSource ?? null,
+      record.structureId ?? null,
+      record.structureMethod ?? null,
+      record.receptorUniProt ?? null,
+      toJson(record.receptorChains),
+      record.referenceEntity ?? null,
+      record.bindingSiteSource ?? null,
+      record.gridDerivation ?? null,
+      toJson(record.gridCenter),
+      toJson(record.gridSize),
+      record.modelSource ?? null,
+      record.modelVersion ?? null,
+      record.modelConfidence ?? null,
+      record.bindingSiteValidationMethod ?? null,
+      record.executionStatus ?? null,
+      record.completedAt ?? null,
+      record.status,
+      toJson(record.provenance),
+      record.notes ?? null,
+      record.createdAt,
+      record.updatedAt,
+      record.createdBy,
+      record.updatedBy,
+    ]
+  )
+
   await writeAuditLog({
     studyId,
     actorId: actor.id,
     action: "dockingRun.create",
     entityType: "dockingRun",
-    entityId: ref.id,
+    entityId: id,
   })
+
   return record
 }
 
-export async function listDockingRuns(studyId: string): Promise<DockingRun[]> {
-  const rows = await listDocs<DockingRun>(studySub(studyId, STUDY_SUBCOLLECTIONS.dockingRuns))
-  return rows
-    .map((r) => DockingRunSchema.parse(r))
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+export async function createSkippedDockingPair(
+  studyId: string,
+  actor: Actor,
+  input: {
+    compoundId: string
+    compoundName: string
+    proteinId: string
+    targetId: string
+    targetName: string
+    runName: string
+    reason?: string
+  }
+): Promise<SkippedDockingPair> {
+  const pairId = canonicalDockingPairDocId(input.compoundId, input.proteinId)
+  const now = new Date().toISOString()
+  const skipRecord = SkippedDockingPairSchema.parse({
+    id: pairId,
+    studyId,
+    compoundId: input.compoundId,
+    compoundName: input.compoundName,
+    proteinId: input.proteinId,
+    targetId: input.targetId,
+    targetName: input.targetName,
+    runName: input.runName,
+    ligandName: input.compoundName,
+    status: "SKIPPED",
+    dockingStatus: "SKIPPED",
+    bindingAffinity: null,
+    bestBindingAffinityKcalMol: null,
+    reason: input.reason || DOCKING_SKIP_REASON,
+    modes: [],
+    createdAt: now,
+    updatedAt: now,
+    createdBy: actor.id,
+    updatedBy: actor.id,
+  })
+
+  await upsertDockingPair(studyId, actor, {
+    compoundId: input.compoundId,
+    proteinId: input.proteinId,
+    targetId: input.targetId,
+    compoundName: input.compoundName,
+    targetName: input.targetName,
+    status: "SKIPPED",
+    latestRunId: null,
+    latestBindingAffinity: null,
+  })
+
+  await writeAuditLog({
+    studyId,
+    actorId: actor.id,
+    action: "dockingPair.skip",
+    entityType: "dockingPair",
+    entityId: pairId,
+  })
+
+  return skipRecord
+}
+
+export async function listDockingRuns(
+  studyId: string,
+  options?: { all?: boolean }
+): Promise<DockingRun[]> {
+  const { completed, allRuns } = await listDockingOutcomes(studyId)
+  return options?.all ? allRuns : completed
+}
+
+export async function listAllDockingRuns(studyId: string): Promise<DockingRun[]> {
+  const { allRuns } = await listDockingOutcomes(studyId)
+  return allRuns
 }
 
 export async function getDockingRun(studyId: string, id: string): Promise<DockingRun | null> {
-  const raw = await getDocData<DockingRun>(studySub(studyId, STUDY_SUBCOLLECTIONS.dockingRuns), id)
-  return raw ? DockingRunSchema.parse(raw) : null
+  const row = await queryOne(`SELECT * FROM docking_runs WHERE study_id = ? AND id = ?`, [studyId, id])
+  if (!row) return null
+  return mapDockingRun(row)
 }
 
 export async function updateDockingRun(
@@ -211,58 +624,105 @@ export async function updateDockingRun(
   if (!existing) throw new Error("Docking run not found")
 
   const now = new Date().toISOString()
-  const best =
-    input.bestBindingAffinityKcalMol ?? bestAffinityFromModes(input.modes)
+  const best = input.bestBindingAffinityKcalMol ?? bestAffinityFromModes(input.modes)
 
-  const next = DockingRunSchema.parse({
-    ...existing,
-    ...input,
-    id,
-    studyId,
-    ligandName: refs.ligandName,
-    ligandPubchemCid: refs.ligandPubchemCid,
-    receptorPdbId: refs.receptorPdbId,
-    bestBindingAffinityKcalMol: best,
-    interactions: input.interactions ?? [],
-    provenance: defaultProvenance("PREDICTED", {
-      ...input.provenance,
-      evidenceClass: "PREDICTED",
-      methodName: input.provenance.methodName || "AutoDock Vina",
-      methodVersion: input.vinaVersion,
-      operatorId: actor.id,
-      recordedAt: input.provenance.recordedAt || now,
-    }),
-    createdAt: existing.createdAt,
-    createdBy: existing.createdBy,
-    updatedAt: now,
-    updatedBy: actor.id,
-  })
-
-  await updateDocData(
-    studySub(studyId, STUDY_SUBCOLLECTIONS.dockingRuns),
-    id,
-    stripUndefined({
-      runName: next.runName,
-      compoundId: next.compoundId,
-      proteinId: next.proteinId,
-      vinaVersion: next.vinaVersion,
-      receptorPdbId: next.receptorPdbId,
-      ligandName: next.ligandName,
-      ligandPubchemCid: next.ligandPubchemCid,
-      exhaustiveness: next.exhaustiveness,
-      numModes: next.numModes,
-      energyRange: next.energyRange,
-      searchBox: next.searchBox,
-      modes: next.modes,
-      bestBindingAffinityKcalMol: next.bestBindingAffinityKcalMol,
-      selectedMode: next.selectedMode,
-      interactions: next.interactions,
-      status: next.status,
-      notes: next.notes,
-      provenance: next.provenance,
-      updatedAt: next.updatedAt,
-      updatedBy: next.updatedBy,
-    })
+  await execute(
+    `UPDATE docking_runs SET
+      run_name = ?,
+      vina_version = ?,
+      receptor_pdb_id = ?,
+      ligand_name = ?,
+      ligand_pubchem_cid = ?,
+      exhaustiveness = ?,
+      num_modes = ?,
+      energy_range = ?,
+      search_box = ?,
+      modes = ?,
+      best_binding_affinity_kcal_mol = ?,
+      selected_mode = ?,
+      interactions = ?,
+      interacting_residues = ?,
+      interaction_notes = ?,
+      source_file_name = ?,
+      pose_file_name = ?,
+      pose_model = ?,
+      ligand_source = ?,
+      receptor_source = ?,
+      docking_profile_id = ?,
+      docking_profile_version = ?,
+      research_target = ?,
+      actual_docking_receptor = ?,
+      structure_source = ?,
+      structure_id = ?,
+      structure_method = ?,
+      receptor_uniprot = ?,
+      receptor_chains = ?,
+      reference_entity = ?,
+      binding_site_source = ?,
+      grid_derivation = ?,
+      grid_center = ?,
+      grid_size = ?,
+      model_source = ?,
+      model_version = ?,
+      model_confidence = ?,
+      binding_site_validation_method = ?,
+      execution_status = ?,
+      completed_at = ?,
+      status = ?,
+      provenance = ?,
+      notes = ?,
+      updated_at = ?,
+      updated_by = ?
+    WHERE study_id = ? AND id = ?`,
+    [
+      input.runName,
+      input.vinaVersion ?? null,
+      refs.receptorPdbId ?? null,
+      refs.ligandName ?? null,
+      refs.ligandPubchemCid ?? null,
+      input.exhaustiveness ?? null,
+      input.numModes ?? null,
+      input.energyRange ?? null,
+      input.searchBox ? JSON.stringify(input.searchBox) : null,
+      JSON.stringify(input.modes),
+      best,
+      input.selectedMode ?? null,
+      JSON.stringify(input.interactions ?? []),
+      input.interactingResidues ?? null,
+      input.interactionNotes ?? null,
+      input.sourceFileName ?? null,
+      input.poseFileName ?? null,
+      input.poseModel ?? null,
+      input.ligandSource ?? null,
+      input.receptorSource ?? null,
+      input.dockingProfileId ?? null,
+      input.dockingProfileVersion ?? null,
+      input.researchTarget ?? null,
+      input.actualDockingReceptor ?? null,
+      input.structureSource ?? null,
+      input.structureId ?? null,
+      input.structureMethod ?? null,
+      input.receptorUniProt ?? null,
+      input.receptorChains ? JSON.stringify(input.receptorChains) : null,
+      input.referenceEntity ?? null,
+      input.bindingSiteSource ?? null,
+      input.gridDerivation ?? null,
+      input.gridCenter ? JSON.stringify(input.gridCenter) : null,
+      input.gridSize ? JSON.stringify(input.gridSize) : null,
+      input.modelSource ?? null,
+      input.modelVersion ?? null,
+      input.modelConfidence ?? null,
+      input.bindingSiteValidationMethod ?? null,
+      input.executionStatus ?? null,
+      input.completedAt ?? null,
+      input.status ?? "imported",
+      JSON.stringify(input.provenance),
+      input.notes ?? null,
+      now,
+      actor.id,
+      studyId,
+      id,
+    ]
   )
 
   await writeAuditLog({
@@ -272,11 +732,101 @@ export async function updateDockingRun(
     entityType: "dockingRun",
     entityId: id,
   })
-  return next
+
+  const updated = await getDockingRun(studyId, id)
+  if (!updated) throw new Error("Docking run update failed")
+  return updated
+}
+
+export async function listDockingOutcomes(
+  studyId: string,
+  options?: { includePoseModel?: boolean }
+): Promise<{
+  completed: DockingRun[]
+  skipped: SkippedDockingPair[]
+  allRuns: DockingRun[]
+  runsByPair: Record<string, DockingRun[]>
+  pairs: DockingPair[]
+}> {
+  const runFields = options?.includePoseModel
+    ? "*"
+    : `id, study_id, pair_id, run_name, compound_id, protein_id, vina_version,
+       receptor_pdb_id, ligand_name, ligand_pubchem_cid, exhaustiveness, num_modes,
+       energy_range, search_box, modes, best_binding_affinity_kcal_mol, selected_mode,
+       interactions, interacting_residues, interaction_notes, source_file_name,
+       pose_file_name, NULL as pose_model, ligand_source, receptor_source, docking_profile_id,
+       docking_profile_version, research_target, actual_docking_receptor,
+       structure_source, structure_id, structure_method, receptor_uniprot,
+       receptor_chains, reference_entity, binding_site_source, grid_derivation,
+       grid_center, grid_size, model_source, model_version, model_confidence,
+       binding_site_validation_method, execution_status, completed_at, status,
+       provenance, notes, created_at, updated_at, created_by, updated_by`
+
+  const [runRows, pairRows] = await Promise.all([
+    query(`SELECT ${runFields} FROM docking_runs WHERE study_id = ? ORDER BY completed_at DESC, created_at DESC`, [studyId]),
+    query(`SELECT * FROM docking_pairs WHERE study_id = ? ORDER BY created_at ASC`, [studyId]),
+  ])
+
+  const pairs: DockingPair[] = pairRows.map(mapDockingPair)
+  const allRuns: DockingRun[] = runRows.map(mapDockingRun)
+  const skipped: SkippedDockingPair[] = []
+
+  // Check skipped pairs
+  for (const p of pairs) {
+    if (p.status === "SKIPPED") {
+      skipped.push(
+        SkippedDockingPairSchema.parse({
+          id: p.id,
+          studyId,
+          compoundId: p.compoundId,
+          compoundName: p.compoundName || "",
+          proteinId: p.proteinId,
+          targetId: p.targetId || p.proteinId,
+          targetName: p.targetName || "",
+          runName: `${p.compoundName} × ${p.targetName}`,
+          ligandName: p.compoundName,
+          status: "SKIPPED",
+          dockingStatus: "SKIPPED",
+          bindingAffinity: null,
+          bestBindingAffinityKcalMol: null,
+          reason: DOCKING_SKIP_REASON,
+          modes: [],
+          createdAt: p.createdAt,
+          updatedAt: p.updatedAt,
+          createdBy: p.createdBy,
+          updatedBy: p.updatedBy,
+        })
+      )
+    }
+  }
+
+  // Group runs by canonical pair
+  const runsByPair: Record<string, DockingRun[]> = {}
+  const latestRunsMap = new Map<string, DockingRun>()
+
+  for (const run of allRuns) {
+    const key = run.pairId || canonicalDockingPairDocId(run.compoundId, run.proteinId)
+    if (!runsByPair[key]) runsByPair[key] = []
+    runsByPair[key].push(run)
+
+    if (!latestRunsMap.has(key)) {
+      latestRunsMap.set(key, run)
+    }
+  }
+
+  const completed = Array.from(latestRunsMap.values())
+
+  return {
+    completed,
+    skipped,
+    allRuns,
+    runsByPair,
+    pairs,
+  }
 }
 
 export async function deleteDockingRun(studyId: string, id: string, actor: Actor): Promise<void> {
-  await deleteDocData(studySub(studyId, STUDY_SUBCOLLECTIONS.dockingRuns), id)
+  await execute(`DELETE FROM docking_runs WHERE study_id = ? AND id = ?`, [studyId, id])
   await writeAuditLog({
     studyId,
     actorId: actor.id,
@@ -286,35 +836,44 @@ export async function deleteDockingRun(studyId: string, id: string, actor: Actor
   })
 }
 
+// ================= Biological Predictions =================
+
+export async function listPredictionRuns(
+  studyId: string,
+  endpoint?: PredictionEndpoint
+): Promise<PredictionRun[]> {
+  const sql = endpoint
+    ? `SELECT * FROM biological_predictions WHERE study_id = ? AND endpoint = ? ORDER BY created_at ASC`
+    : `SELECT * FROM biological_predictions WHERE study_id = ? ORDER BY created_at ASC`
+  const params = endpoint ? [studyId, endpoint] : [studyId]
+  const rows = await query(sql, params)
+  return rows.map(mapPredictionRun)
+}
+
+export async function getPredictionRun(studyId: string, id: string): Promise<PredictionRun | null> {
+  const row = await queryOne(`SELECT * FROM biological_predictions WHERE study_id = ? AND id = ?`, [studyId, id])
+  if (!row) return null
+  return mapPredictionRun(row)
+}
+
 export async function createPredictionRun(
   studyId: string,
   actor: Actor,
-  rawInput: PredictionRunInput
+  input: PredictionRunInput
 ): Promise<PredictionRun> {
-  const input = await validatePredictionInput(studyId, rawInput)
-  const ref = docRef(studySub(studyId, STUDY_SUBCOLLECTIONS.predictionRuns))
+  const validated = PredictionRunInputSchema.parse(input)
+  const id = generateDocId()
   const now = new Date().toISOString()
-  const evidence = input.provenance.evidenceClass
 
   const record = PredictionRunSchema.parse({
-    ...input,
-    id: ref.id,
+    ...validated,
+    id,
     studyId,
-    endpoint: input.endpoint,
-    module: input.endpoint,
-    resultPoints: input.resultPoints ?? [],
-    referenceIds: input.referenceIds ?? [],
-    status: input.status ?? "imported",
-    provenance: defaultProvenance(evidence, {
-      ...input.provenance,
-      evidenceClass: evidence,
-      methodName: input.methodName,
-      methodVersion: input.methodVersion,
-      source: input.source,
+    module: validated.endpoint,
+    provenance: defaultProvenance(validated.provenance.evidenceClass, {
+      ...validated.provenance,
       operatorId: actor.id,
-      recordedAt: input.dateGenerated || input.provenance.recordedAt || now,
-      assumptions: input.assumptions ?? input.provenance.assumptions,
-      limitations: input.limitations ?? input.provenance.limitations,
+      recordedAt: validated.provenance.recordedAt || now,
     }),
     createdAt: now,
     updatedAt: now,
@@ -322,146 +881,67 @@ export async function createPredictionRun(
     updatedBy: actor.id,
   })
 
-  await setDocData(studySub(studyId, STUDY_SUBCOLLECTIONS.predictionRuns), ref.id, record)
-  await writeAuditLog({
-    studyId,
-    actorId: actor.id,
-    action: "predictionRun.create",
-    entityType: "predictionRun",
-    entityId: ref.id,
-  })
-  return record
-}
-
-export async function listPredictionRuns(
-  studyId: string,
-  endpoint?: PredictionEndpoint
-): Promise<PredictionRun[]> {
-  const rows = await listDocs<PredictionRun>(studySub(studyId, STUDY_SUBCOLLECTIONS.predictionRuns))
-  return rows
-    .map((r) => {
-      const endpointId = (r as PredictionRun).endpoint ?? (r as PredictionRun).module
-      return PredictionRunSchema.parse({
-        ...r,
-        endpoint: endpointId,
-        module: endpointId,
-        runName: (r as PredictionRun).runName || `${endpointId} run`,
-        methodName: (r as PredictionRun).methodName || (r as PredictionRun).provenance?.methodName || "unspecified",
-        methodType: (r as PredictionRun).methodType || "other",
-        source: (r as PredictionRun).source || (r as PredictionRun).provenance?.source || "unspecified",
-        dateGenerated:
-          (r as PredictionRun).dateGenerated ||
-          (r as PredictionRun).provenance?.recordedAt ||
-          (r as PredictionRun).createdAt,
-        concentrationUnit: (r as PredictionRun).concentrationUnit || "other",
-        resultPoints: (r as PredictionRun).resultPoints ?? [],
-        referenceIds: (r as PredictionRun).referenceIds ?? [],
-        status: (() => {
-          const s = String((r as { status?: string }).status || "imported")
-          if (s === "complete") return "imported" as const
-          if (s === "draft" || s === "imported" || s === "final") return s
-          return "imported" as const
-        })(),
-      })
-    })
-    .filter((r) => (endpoint ? r.endpoint === endpoint : true))
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-}
-
-export async function getPredictionRun(studyId: string, id: string): Promise<PredictionRun | null> {
-  const raw = await getDocData<PredictionRun>(studySub(studyId, STUDY_SUBCOLLECTIONS.predictionRuns), id)
-  if (!raw) return null
-  const endpointId = raw.endpoint ?? raw.module
-  return PredictionRunSchema.parse({
-    ...raw,
-    endpoint: endpointId,
-    module: endpointId,
-  })
-}
-
-export async function updatePredictionRun(
-  studyId: string,
-  id: string,
-  actor: Actor,
-  rawInput: PredictionRunInput
-): Promise<PredictionRun> {
-  const input = await validatePredictionInput(studyId, rawInput)
-  const existing = await getPredictionRun(studyId, id)
-  if (!existing) throw new Error("Prediction run not found")
-  if (existing.endpoint !== input.endpoint) {
-    throw new Error("Cannot change prediction endpoint on an existing run.")
-  }
-
-  const now = new Date().toISOString()
-  const evidence = input.provenance.evidenceClass
-  const next = PredictionRunSchema.parse({
-    ...existing,
-    ...input,
-    id,
-    studyId,
-    endpoint: input.endpoint,
-    module: input.endpoint,
-    resultPoints: input.resultPoints ?? [],
-    referenceIds: input.referenceIds ?? [],
-    provenance: defaultProvenance(evidence, {
-      ...input.provenance,
-      evidenceClass: evidence,
-      methodName: input.methodName,
-      methodVersion: input.methodVersion,
-      source: input.source,
-      operatorId: actor.id,
-      recordedAt: input.dateGenerated || input.provenance.recordedAt || now,
-      assumptions: input.assumptions ?? input.provenance.assumptions,
-      limitations: input.limitations ?? input.provenance.limitations,
-    }),
-    createdAt: existing.createdAt,
-    createdBy: existing.createdBy,
-    updatedAt: now,
-    updatedBy: actor.id,
-  })
-
-  await updateDocData(
-    studySub(studyId, STUDY_SUBCOLLECTIONS.predictionRuns),
-    id,
-    stripUndefined({
-      endpoint: next.endpoint,
-      module: next.module,
-      runName: next.runName,
-      compoundId: next.compoundId,
-      formulationId: next.formulationId,
-      cellLineId: next.cellLineId,
-      methodName: next.methodName,
-      methodVersion: next.methodVersion,
-      methodType: next.methodType,
-      source: next.source,
-      referenceIds: next.referenceIds,
-      assumptions: next.assumptions,
-      limitations: next.limitations,
-      concentrationUnit: next.concentrationUnit,
-      inputParameters: next.inputParameters,
-      dateGenerated: next.dateGenerated,
-      operatorName: next.operatorName,
-      resultPoints: next.resultPoints,
-      status: next.status,
-      notes: next.notes,
-      provenance: next.provenance,
-      updatedAt: next.updatedAt,
-      updatedBy: next.updatedBy,
-    })
+  await execute(
+    `INSERT INTO biological_predictions (
+      id, study_id, endpoint, run_name, compound_id, formulation_id, cell_line_id,
+      protein_id, summary_ic50, summary_ic50_unit, summary_maximum, summary_maximum_unit,
+      teac, selectivity_index, pathway_effect, concentration_unit_label, method_name,
+      method_version, method_type, source, reference_ids, assumptions, limitations,
+      concentration_unit, input_parameters, date_generated, operator_name, result_points,
+      status, provenance, notes, created_at, updated_at, created_by, updated_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      record.id,
+      studyId,
+      record.endpoint,
+      record.runName,
+      record.compoundId ?? null,
+      record.formulationId ?? null,
+      record.cellLineId ?? null,
+      record.proteinId ?? null,
+      record.summaryIc50 ?? null,
+      record.summaryIc50Unit ?? null,
+      record.summaryMaximum ?? null,
+      record.summaryMaximumUnit ?? null,
+      record.teac ?? null,
+      record.selectivityIndex ?? null,
+      record.pathwayEffect ?? null,
+      record.concentrationUnitLabel ?? null,
+      record.methodName,
+      record.methodVersion ?? null,
+      record.methodType,
+      record.source,
+      toJson(record.referenceIds),
+      record.assumptions ?? null,
+      record.limitations ?? null,
+      record.concentrationUnit,
+      toJson(record.inputParameters),
+      record.dateGenerated,
+      record.operatorName ?? null,
+      toJson(record.resultPoints),
+      record.status,
+      toJson(record.provenance),
+      record.notes ?? null,
+      record.createdAt,
+      record.updatedAt,
+      record.createdBy,
+      record.updatedBy,
+    ]
   )
 
   await writeAuditLog({
     studyId,
     actorId: actor.id,
-    action: "predictionRun.update",
+    action: "predictionRun.create",
     entityType: "predictionRun",
     entityId: id,
   })
-  return next
+
+  return record
 }
 
 export async function deletePredictionRun(studyId: string, id: string, actor: Actor): Promise<void> {
-  await deleteDocData(studySub(studyId, STUDY_SUBCOLLECTIONS.predictionRuns), id)
+  await execute(`DELETE FROM biological_predictions WHERE study_id = ? AND id = ?`, [studyId, id])
   await writeAuditLog({
     studyId,
     actorId: actor.id,
@@ -471,86 +951,76 @@ export async function deletePredictionRun(studyId: string, id: string, actor: Ac
   })
 }
 
-async function validatePredictionInput(
+export async function updatePredictionRun(
   studyId: string,
-  rawInput: PredictionRunInput
-): Promise<PredictionRunInput> {
-  const input = PredictionRunInputSchema.parse({
-    ...rawInput,
-    module: rawInput.endpoint,
-    endpoint: rawInput.endpoint,
-  })
+  id: string,
+  actor: Actor,
+  input: Partial<PredictionRun>
+): Promise<PredictionRun> {
+  const now = new Date().toISOString()
+  const fields: string[] = ["updated_at = ?", "updated_by = ?"]
+  const params: unknown[] = [now, actor.id]
 
-  const cfg = getPredictionEndpoint(input.endpoint)
-  const evidence = input.provenance.evidenceClass
-
-  if (evidence !== "PREDICTED" && evidence !== "SIMULATION") {
-    throw new Error("Prediction runs may only use PREDICTED or SIMULATION evidence.")
+  if (input.runName !== undefined) {
+    fields.push("run_name = ?")
+    params.push(input.runName)
   }
-  if (evidence === "PREDICTED") {
-    if (!input.methodName.trim()) throw new Error("PREDICTED runs require a documented method name.")
-    if (!input.source.trim()) throw new Error("PREDICTED runs require a source / reference description.")
-    if (!input.dateGenerated.trim()) throw new Error("PREDICTED runs require a generation date.")
-    if (input.methodType === "exploratory_math") {
-      throw new Error("exploratory_math method type must use SIMULATION evidence, not PREDICTED.")
-    }
+  if (input.notes !== undefined) {
+    fields.push("notes = ?")
+    params.push(input.notes ?? null)
   }
-  if (evidence === "SIMULATION") {
-    if (!input.assumptions?.trim() && !input.provenance.assumptions?.trim()) {
-      throw new Error("SIMULATION runs require documented assumptions.")
-    }
+  if (input.status !== undefined) {
+    fields.push("status = ?")
+    params.push(input.status)
   }
 
-  if (input.concentrationUnit !== cfg.concentrationUnit) {
-    throw new Error(
-      `${cfg.shortLabel} workspace requires concentration unit ${cfg.concentrationUnitLabel} (${cfg.concentrationUnit}).`
-    )
-  }
+  params.push(studyId, id)
+  await execute(`UPDATE biological_predictions SET ${fields.join(", ")} WHERE study_id = ? AND id = ?`, params)
+  const updated = await getPredictionRun(studyId, id)
+  if (!updated) throw new Error("Prediction run update failed")
+  return updated
+}
 
-  if (cfg.subjectType === "compound") {
-    if (!input.compoundId) throw new Error("Select a compound (ligand / phytochemical) for this endpoint.")
-    const compound = await getCompound(studyId, input.compoundId)
-    if (!compound) throw new Error("Selected compound was not found in this study.")
-    if (input.formulationId) {
-      throw new Error("Compound-level endpoints must not reference a formulation subject.")
-    }
-  } else {
-    if (!input.formulationId) throw new Error("Select a formulation for this endpoint.")
-    const formulation = await getFormulation(studyId, input.formulationId)
-    if (!formulation) throw new Error("Selected formulation was not found in this study.")
-    if (input.compoundId) {
-      throw new Error("Formulation-level endpoints must not use compoundId as the primary subject.")
-    }
-  }
+export async function skipDockingPair(
+  studyId: string,
+  actor: Actor,
+  input: { compoundId: string; compoundName: string; proteinId: string; targetName: string; reason?: string }
+): Promise<void> {
+  const pairId = canonicalDockingPairDocId(input.compoundId, input.proteinId)
+  const now = new Date().toISOString()
+  await execute(
+    `INSERT INTO docking_pairs (
+      id, study_id, compound_id, protein_id, target_id, compound_name, target_name,
+      status, latest_run_id, latest_binding_affinity, runs_count, archived,
+      provenance, notes, created_at, updated_at, created_by, updated_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'SKIPPED', NULL, NULL, 0, 0, ?, ?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      status = 'SKIPPED',
+      notes = VALUES(notes),
+      updated_at = VALUES(updated_at),
+      updated_by = VALUES(updated_by)`,
+    [
+      pairId,
+      studyId,
+      input.compoundId,
+      input.proteinId,
+      input.proteinId,
+      input.compoundName,
+      input.targetName,
+      JSON.stringify(defaultProvenance("REFERENCE", { evidenceClass: "REFERENCE", recordedAt: now, operatorId: actor.id })),
+      input.reason ?? DOCKING_SKIP_REASON,
+      now,
+      now,
+      actor.id,
+      actor.id,
+    ]
+  )
+}
 
-  if (cfg.requiresCellLine) {
-    if (!input.cellLineId) throw new Error("Select a cell line (HepG2 primary for this study).")
-    const cell = await getCellLine(studyId, input.cellLineId)
-    if (!cell) throw new Error("Selected cell line was not found in this study.")
-  }
-
-  for (const pt of input.resultPoints ?? []) {
-    if (pt.concentrationUnit !== input.concentrationUnit) {
-      throw new Error("Each result point must use the same concentration unit as the run.")
-    }
-    if (typeof pt.value !== "number" || Number.isNaN(pt.value)) {
-      throw new Error("Result values must be numeric — enter only values from a documented method.")
-    }
-  }
-
-  // Soft guard: warn via throw if DPPH experimental-looking µg/mL grid used in µM workspace
-  if (input.endpoint === "dpph" && input.concentrationUnit === "uM") {
-    const vals = (input.resultPoints ?? []).map((p) => p.concentration)
-    const looksLikeExpUg =
-      vals.length >= 3 &&
-      vals.every((v) => [50, 100, 250, 500].includes(v)) &&
-      !vals.some((v) => [3.13, 6.25, 12.5, 25].includes(v))
-    if (looksLikeExpUg) {
-      throw new Error(
-        "These concentrations look like Experimental DPPH µg/mL (T3–T6). In-silico DPPH uses µM (0, 3.13–100). Document unit conversion before entering experimental-like grids here."
-      )
-    }
-  }
-
-  return input
+export async function reopenDockingPair(studyId: string, pairId: string, actor: Actor): Promise<void> {
+  const now = new Date().toISOString()
+  await execute(
+    `UPDATE docking_pairs SET status = 'PENDING', updated_at = ?, updated_by = ? WHERE study_id = ? AND id = ?`,
+    [now, actor.id, studyId, pairId]
+  )
 }

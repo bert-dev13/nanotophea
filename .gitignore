@@ -8,6 +8,7 @@ out/
 .env.local
 .env.*.local
 !.env.example
+.vercel
 
 # Firebase Admin credentials — never commit
 service.json
@@ -15,6 +16,9 @@ service.json
 GOOGLE_APPLICATION_CREDENTIALS*
 
 .vite/
+.docking-venv/
+.adme-venv/
+tools/vina/
 vite.config.*.timestamp-*
 *.tsbuildinfo
 *-debug.log*

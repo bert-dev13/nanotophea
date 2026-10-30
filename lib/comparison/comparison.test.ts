@@ -81,6 +81,7 @@ function baseDataset(over: Partial<LabDataset> = {}): LabDataset {
     protocolReference: "kit protocol",
     cellLineName: "HepG2",
     treatmentSummaries: [],
+    observations: [],
     outsourcedLab: false,
     status: "draft",
     provenance: { evidenceClass: "EXPERIMENTAL", laboratoryName: "DMBEL" },
@@ -206,6 +207,7 @@ describe("DPPH side-by-side behavior", () => {
     })
     assert.equal(result.predictionEvidenceClass, "SIMULATION")
     assert.ok(result.notices.some((n) => /distinct evidence layers/i.test(n)))
+    assert.ok(result.notices.some((n) => /Predictions compared with experimental observations/i.test(n)))
   })
 })
 

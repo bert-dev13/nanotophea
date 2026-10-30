@@ -218,9 +218,35 @@ describe("experimental orchestration", () => {
     })
     assert.equal(result.completeness.incomplete, true)
     assert.ok(result.completeness.warnings.some((w) => /Missing values were not replaced/.test(w)))
+    assert.equal(result.completeness.warnings.some((w) => w === "Missing: T1 R3"), false)
     const t1 = result.treatmentSummaries.find((t) => t.treatmentCode === "T1")
     assert.equal(t1?.n, 2)
     assert.equal(t1?.mean, 1.5)
+  })
+
+  it("does not treat DPPH solvent-control inhibition as a missing measurement", () => {
+    const reps: LabReplicate[] = []
+    for (const t of ["T1", "T2", "T3", "T4", "T5", "T6"] as const) {
+      for (const r of ["R1", "R2", "R3"] as const) {
+        const absorbance = t === "T1" ? 0.8 : 0.4
+        const measurements: LabReplicate["measurements"] = { absorbance }
+        if (t !== "T1") measurements.radicalScavengingPercent = 50
+        reps.push({
+          ...fakeRep(t, r, undefined),
+          measurements,
+        })
+      }
+    }
+    const result = computeExperimentalStatistics({
+      assayType: "dpph",
+      measurementKey: "radicalScavengingPercent",
+      replicates: reps,
+    })
+    assert.equal(result.completeness.incomplete, false)
+    assert.equal(result.completeness.warnings.some((w) => /T1 R1/.test(w)), false)
+    assert.equal(result.rawGrid.find((cell) => cell.treatmentCode === "T1")?.applicable, false)
+    assert.equal(result.treatmentSummaries.find((row) => row.treatmentCode === "T1")?.notApplicable, true)
+    assert.equal(result.anova.k, 5)
   })
 
   it("rejects non-eligible assays", () => {

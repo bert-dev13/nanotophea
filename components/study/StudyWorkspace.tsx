@@ -3,23 +3,55 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { ArrowLeft, ArrowRight } from "lucide-react"
+import { useAuth } from "@/components/providers/AuthProvider"
 import { useStudy } from "@/components/providers/StudyProvider"
 import { useWorkflowStatus } from "@/components/study/WorkflowStatus"
-import { InSilicoScreening } from "@/components/study/InSilicoScreening"
-import { AnalysisInterpretation } from "@/components/study/AnalysisInterpretation"
-import { LaboratoryValidation } from "@/components/study/LaboratoryValidation"
-import { MolecularDocking } from "@/components/study/MolecularDocking"
+import dynamic from "next/dynamic"
 import { ResearchSetup } from "@/components/study/ResearchSetup"
 import { WorkspaceModules } from "@/components/study/WorkspaceModules"
+
+const WorkspaceLoading = () => (
+  <div className="py-12 flex flex-col items-center justify-center text-center gap-3">
+    <div className="w-7 h-7 rounded-full border-2 border-emerald-500/20 border-t-emerald-500 animate-spin" />
+    <p className="text-xs text-slate-400 font-medium">Loading workspace module…</p>
+  </div>
+)
+
+const InSilicoWorkspace = dynamic(
+  () => import("@/components/study/InSilicoWorkspace").then((m) => m.InSilicoWorkspace),
+  { loading: WorkspaceLoading }
+)
+const DockingPairsWorkspace = dynamic(
+  () => import("@/components/study/DockingPairsWorkspace").then((m) => m.DockingPairsWorkspace),
+  { loading: WorkspaceLoading }
+)
+const BiologicalPredictionsWorkspace = dynamic(
+  () => import("@/components/study/BiologicalPredictionsWorkspace").then((m) => m.BiologicalPredictionsWorkspace || m.default),
+  { loading: WorkspaceLoading }
+)
+const LaboratoryWorkspace = dynamic(
+  () => import("@/components/study/LaboratoryWorkspace").then((m) => m.LaboratoryWorkspace),
+  { loading: WorkspaceLoading }
+)
+const AnalysisInterpretation = dynamic(
+  () => import("@/components/study/AnalysisInterpretation").then((m) => m.AnalysisInterpretation),
+  { loading: WorkspaceLoading }
+)
+const AssistantStudyPage = dynamic(
+  () => import("@/components/ai/assistant-workspace").then((m) => m.AssistantStudyPage),
+  { loading: WorkspaceLoading }
+)
 import type { StudyStatus } from "@/lib/domain/models"
 import {
+  canEnterStep,
   continueAdvisory,
   continueRequirements,
   nextStep,
   parseWorkspaceSlug,
   previousStep,
-  stepRequirementsMet,
+  stepLockedMessage,
   studyPath,
+  WORKFLOW_STEPS,
   workspacePath,
   writeWorkflowProgress,
   type StepId,
@@ -29,12 +61,14 @@ const STATUS_LABEL: Record<StudyStatus, string> = {
   draft: "Draft",
   active: "Active",
   analysis: "Analysis",
+  completed: "Completed",
   archived: "Archived",
 }
 
 export function StudyWorkspace({ studyId, slug }: { studyId: string; slug: string[] }) {
   const router = useRouter()
-  const { studies, activeStudy, loading, error, selectStudy } = useStudy()
+  const { user, loading: authLoading } = useAuth()
+  const { studies, activeStudy, loading: studyLoading, error, selectStudy } = useStudy()
   const { readiness, error: checkError, refresh } = useWorkflowStatus()
   const { step, tab } = parseWorkspaceSlug(slug)
   const [checking, setChecking] = useState(false)
@@ -42,23 +76,28 @@ export function StudyWorkspace({ studyId, slug }: { studyId: string; slug: strin
   const canonical = workspacePath(studyId, slug)
   const actual = `/study/${studyId}${slug.length ? `/${slug.join("/")}` : ""}`
 
-  useEffect(() => {
-    if (actual !== canonical) router.replace(canonical)
-  }, [actual, canonical, router])
+  const assistant = slug[0] === "assistant"
 
   useEffect(() => {
-    if (!readiness || step.id === "setup") return
-    if (stepRequirementsMet("setup", readiness)) return
-    router.replace(studyPath(studyId, "setup", "formulation"))
-  }, [readiness, step.id, studyId, router])
+    if (assistant) return
+    if (actual !== canonical) router.replace(canonical)
+  }, [assistant, actual, canonical, router])
+
+  useEffect(() => {
+    if (assistant || !readiness) return
+    if (canEnterStep(step.id, readiness)) return
+    const fallback = [...WORKFLOW_STEPS].reverse().find((item) => canEnterStep(item.id, readiness)) ?? WORKFLOW_STEPS[0]
+    if (fallback.id === step.id) return
+    router.replace(studyPath(studyId, fallback.id))
+  }, [assistant, readiness, step.id, studyId, router])
 
   const known = studies.some((s) => s.id === studyId)
   const matched = activeStudy?.id === studyId
 
   useEffect(() => {
-    if (loading || !known || matched) return
+    if (authLoading || studyLoading || !known || matched) return
     void selectStudy(studyId)
-  }, [loading, known, matched, selectStudy, studyId])
+  }, [authLoading, studyLoading, known, matched, selectStudy, studyId])
 
   const goTab = (nextTab: string) => {
     router.push(studyPath(studyId, step.id, nextTab), { scroll: false })
@@ -68,10 +107,14 @@ export function StudyWorkspace({ studyId, slug }: { studyId: string; slug: strin
     router.push(studyPath(studyId, stepId), { scroll: false })
   }
 
-  const missing = readiness ? continueRequirements(step.id, readiness) : []
-  const advisory = readiness && missing.length === 0 ? continueAdvisory(step.id, readiness) : null
   const upcoming = nextStep(step.id)
   const prior = previousStep(step.id)
+  const ownMissing = readiness ? continueRequirements(step.id, readiness) : []
+  const nextLock = ownMissing.length === 0 && upcoming && readiness && !canEnterStep(upcoming.id, readiness)
+    ? stepLockedMessage(upcoming.id, readiness)
+    : null
+  const missing = [...ownMissing, ...(nextLock ? [nextLock] : [])]
+  const advisory = readiness && missing.length === 0 ? continueAdvisory(step.id, readiness) : null
   const continueDisabled = checking || !readiness || missing.length > 0 || Boolean(checkError)
 
   const onContinue = async () => {
@@ -81,14 +124,39 @@ export function StudyWorkspace({ studyId, slug }: { studyId: string; slug: strin
     setChecking(false)
     if (!fresh) return
     if (continueRequirements(step.id, fresh).length > 0) return
+    if (!canEnterStep(upcoming.id, fresh)) return
     writeWorkflowProgress(studyId, upcoming.index)
     router.push(studyPath(studyId, upcoming.id), { scroll: false })
   }
 
-  if (loading) {
+  // AUTH_LOADING
+  if (authLoading) {
+    return <p className="py-10 text-sm text-[var(--muted-foreground)]">Authenticating…</p>
+  }
+
+  // UNAUTHORIZED
+  if (!user) {
+    return (
+      <div className="py-10">
+        <h1 className="font-[family-name:var(--font-display)] text-lg font-semibold">
+          Authentication required
+        </h1>
+        <p className="mt-2 max-w-md text-[13px] text-[var(--muted-foreground)]">
+          Please sign in to access this study.
+        </p>
+        <button type="button" className="nano-flow-next mt-4" onClick={() => router.push("/")}>
+          Return to Sign In
+        </button>
+      </div>
+    )
+  }
+
+  // LOADING_STUDY
+  if (studyLoading) {
     return <p className="py-10 text-sm text-[var(--muted-foreground)]">Opening study…</p>
   }
 
+  // NOT_FOUND / UNAVAILABLE
   if (!known) {
     return (
       <div className="py-10">
@@ -105,13 +173,12 @@ export function StudyWorkspace({ studyId, slug }: { studyId: string; slug: strin
     )
   }
 
+  // LOADING_STUDY (matching active)
   if (!matched || !activeStudy) {
     return <p className="py-10 text-sm text-[var(--muted-foreground)]">Opening study…</p>
   }
 
-  const openSetup = (setupTab: string) => {
-    router.push(studyPath(studyId, "setup", setupTab), { scroll: false })
-  }
+  if (assistant) return <AssistantStudyPage />
 
   if (step.id === "setup") {
     return (
@@ -122,87 +189,81 @@ export function StudyWorkspace({ studyId, slug }: { studyId: string; slug: strin
         checkError={checkError}
         checking={checking}
         missing={missing}
-        onTab={goTab}
-        onContinue={() => void onContinue()}
-        onChanged={() => void refresh()}
+        onTabAction={goTab}
+        onContinueAction={() => void onContinue()}
+        onChangedAction={() => void refresh()}
       />
     )
   }
 
   if (step.id === "insilico") {
     return (
-      <InSilicoScreening
-        title={activeStudy.title}
-        status={activeStudy.status}
-        tab={tab}
-        readiness={readiness}
+      <InSilicoWorkspace
         checkError={checkError}
         checking={checking}
         missing={missing}
-        onTab={goTab}
-        onBack={() => goStep("setup")}
-        onGap={openSetup}
-        onContinue={() => void onContinue()}
-      >
-        <WorkspaceModules
-          step={step.id}
-          tab={tab}
-          readiness={readiness}
-          onOpenTab={goTab}
-          onOpenSetup={openSetup}
-        />
-      </InSilicoScreening>
+        continueDisabled={continueDisabled}
+        onBackAction={() => goStep("setup")}
+        onContinueAction={() => void onContinue()}
+        onChangedAction={() => void refresh()}
+      />
     )
   }
 
   if (step.id === "docking") {
     return (
-      <MolecularDocking
-        title={activeStudy.title}
-        status={activeStudy.status}
-        readiness={readiness}
+      <DockingPairsWorkspace
         checkError={checkError}
         checking={checking}
-        onBack={() => goStep("insilico")}
-        onOpenSetup={openSetup}
-        onContinue={() => void onContinue()}
-      >
-        <WorkspaceModules step={step.id} tab={tab} readiness={readiness} onOpenTab={goTab} />
-      </MolecularDocking>
+        missing={missing}
+        continueDisabled={continueDisabled}
+        onBackAction={() => goStep("insilico")}
+        onContinueAction={() => void onContinue()}
+        onChangedAction={() => void refresh()}
+      />
+    )
+  }
+
+  if (step.id === "predictions") {
+    return (
+      <BiologicalPredictionsWorkspace
+        tab={tab}
+        onTabAction={goTab}
+        checkError={checkError}
+        checking={checking}
+        missing={missing}
+        continueDisabled={continueDisabled}
+        onBackAction={() => goStep("docking")}
+        onContinueAction={() => void onContinue()}
+        onChangedAction={() => void refresh()}
+      />
     )
   }
 
   if (step.id === "laboratory") {
     return (
-      <LaboratoryValidation
-        title={activeStudy.title}
-        status={activeStudy.status}
+      <LaboratoryWorkspace
         tab={tab}
-        readiness={readiness}
+        onTabAction={goTab}
         checkError={checkError}
         checking={checking}
-        onTab={goTab}
-        onBack={() => goStep("predictions")}
-        onContinue={() => void onContinue()}
-      >
-        <WorkspaceModules step={step.id} tab={tab} readiness={readiness} onOpenTab={goTab} />
-      </LaboratoryValidation>
+        missing={missing}
+        continueDisabled={continueDisabled}
+        onBackAction={() => goStep("predictions")}
+        onContinueAction={() => void onContinue()}
+        onChangedAction={() => void refresh()}
+      />
     )
   }
 
   if (step.id === "analysis") {
     return (
       <AnalysisInterpretation
-        title={activeStudy.title}
-        status={activeStudy.status}
-        tab={tab}
         readiness={readiness}
         checkError={checkError}
-        onTab={goTab}
-        onBack={() => goStep("laboratory")}
-      >
-        <WorkspaceModules step={step.id} tab={tab} readiness={readiness} onOpenTab={goTab} />
-      </AnalysisInterpretation>
+        onBackAction={() => goStep("laboratory")}
+        onCompletedAction={() => void refresh()}
+      />
     )
   }
 
@@ -254,7 +315,7 @@ export function StudyWorkspace({ studyId, slug }: { studyId: string; slug: strin
         <WorkspaceModules step={step.id} tab={tab} readiness={readiness} onOpenTab={goTab} />
       </div>
 
-      <footer className="mt-8 border-t pt-4" style={{ borderColor: "var(--border)" }}>
+      <footer className="nano-flow-footer mt-8 border-t pt-4" style={{ borderColor: "var(--border)" }}>
         {checkError ? (
           <p className="mb-3 text-[13px]" style={{ color: "#b91c1c" }} role="status">
             {checkError}

@@ -1,5 +1,7 @@
+"use server"
+
 /**
- * Interpretation repository — researcher-authored, evidence-linked.
+ * Interpretation repository — researcher-authored, evidence-linked using MySQL/MariaDB.
  * Never auto-generates conclusions or hypothesis assessments.
  */
 import {
@@ -13,15 +15,8 @@ import {
   type HypothesisAssessment,
 } from "@/lib/domain/models"
 import { defaultProvenance } from "@/lib/domain/provenance"
-import { STUDY_SUBCOLLECTIONS, studySub } from "@/lib/firebase/paths"
-import {
-  deleteDocData,
-  docRef,
-  getDocData,
-  listDocs,
-  setDocData,
-  updateDocData,
-} from "@/lib/firebase/firestore"
+import { execute, query, queryOne } from "@/lib/db/mysql"
+import { mapInterpretation } from "@/lib/repositories/mysqlMappers"
 import { writeAuditLog } from "@/lib/repositories/auditRepository"
 import {
   getCellLine,
@@ -58,231 +53,368 @@ import {
   type InterpretationSourceType,
 } from "@/lib/interpretation/evidenceCatalog"
 import { getInterpretationPreset } from "@/lib/interpretation/presets"
-import type { EvidenceType } from "@/types/evidence"
+import { randomUUID } from "crypto"
 
 type Actor = { id: string }
 
-function stripUndefined(obj: Record<string, unknown>) {
-  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined))
+function toJson(val: unknown): string | null {
+  if (val === undefined || val === null) return null
+  return JSON.stringify(val)
 }
 
-function normalizeStatus(status: string | undefined): Interpretation["status"] {
-  if (status === "submitted") return "reviewed"
-  if (status === "draft" || status === "reviewed" || status === "final") return status
-  return "draft"
+function generateDocId(): string {
+  return randomUUID().replace(/-/g, "").slice(0, 20)
 }
 
-function parseInterpretation(raw: Interpretation): Interpretation {
-  const linkedEvidence = raw.linkedEvidence?.length
-    ? raw.linkedEvidence
-    : (raw.linkedEvidenceIds ?? []).map((id) => ({
-        sourceType: "reference" as const,
-        sourceId: id,
-        evidenceClass: "REFERENCE" as const,
-        label: id,
-      }))
+export async function createInterpretation(
+  studyId: string,
+  actor: Actor,
+  rawInput: InterpretationCreateInput
+): Promise<Interpretation> {
+  const input = InterpretationCreateInputSchema.parse(rawInput)
 
-  return InterpretationSchema.parse({
-    ...raw,
-    status: normalizeStatus(raw.status as string),
-    linkedEvidence,
-    body: raw.body ?? raw.interpretationText ?? "",
-    interpretationText: raw.interpretationText || raw.body || "",
-    researchQuestion: raw.researchQuestion ?? "",
-    researchObjective: raw.researchObjective ?? "",
-    hypothesisText: raw.hypothesisText ?? "",
-    computationalSummary: raw.computationalSummary ?? "",
-    experimentalSummary: raw.experimentalSummary ?? "",
-    statisticalSummary: raw.statisticalSummary ?? "",
-    comparisonSummary: raw.comparisonSummary ?? "",
-    limitations: raw.limitations ?? "",
-    conclusion: raw.conclusion ?? "",
-    hypothesisAssessment: raw.hypothesisAssessment ?? "not_assessed",
+  const preset = input.researchQuestionPresetId
+    ? getInterpretationPreset(input.researchQuestionPresetId)
+    : undefined
+
+  const question = input.researchQuestion || preset?.researchQuestion || ""
+  const objective = input.researchObjective || preset?.researchObjective || ""
+  const hypothesis = input.hypothesisText || preset?.hypothesisText || ""
+
+  const linked = input.linkedEvidence ?? []
+  for (const link of linked) {
+    assertValidEvidenceClassForSource(link.sourceType, link.evidenceClass)
+  }
+
+  const id = generateDocId()
+  const now = new Date().toISOString()
+  const fingerprint = buildInterpretationFingerprint(linked)
+
+  const record = InterpretationSchema.parse({
+    id,
+    studyId,
+    title: input.title,
+    body: input.interpretationText || input.title,
+    researchQuestion: question,
+    researchObjective: objective,
+    hypothesisText: hypothesis,
+    researchQuestionPresetId: input.researchQuestionPresetId,
+    linkedEvidence: linked,
+    computationalSummary: input.computationalSummary || "",
+    experimentalSummary: input.experimentalSummary || "",
+    statisticalSummary: input.statisticalSummary || "",
+    comparisonSummary: input.comparisonSummary || "",
+    interpretationText: input.interpretationText || "",
+    limitations: input.limitations || "",
+    conclusion: input.conclusion || "",
+    endpointFindings: input.endpointFindings,
+    dockingInterpretation: input.dockingInterpretation,
+    characterizationInterpretation: input.characterizationInterpretation,
+    generatedBy: input.generatedBy,
+    provider: input.provider,
+    model: input.model,
+    generatedAt: input.generatedAt,
+    evidenceVersion: input.evidenceVersion,
+    aiAssistance: input.aiAssistance,
+    hypothesisAssessment: input.hypothesisAssessment ?? "not_assessed",
+    assessmentRationale: input.assessmentRationale,
+    status: input.status ?? "draft",
+    sourceFingerprint: fingerprint,
+    notes: input.notes,
+    provenance: defaultProvenance("INTERPRETATION", {
+      operatorId: actor.id,
+      recordedAt: now,
+    }),
+    createdAt: now,
+    updatedAt: now,
+    createdBy: actor.id,
+    updatedBy: actor.id,
+  })
+
+  await execute(
+    `INSERT INTO interpretations (
+      id, study_id, title, body, research_question, research_objective, hypothesis_text,
+      research_question_preset_id, linked_evidence, computational_summary, experimental_summary,
+      statistical_summary, comparison_summary, interpretation_text, limitations, conclusion,
+      endpoint_findings, docking_interpretation, characterization_interpretation, generated_by,
+      provider, model, generated_at, evidence_version, ai_assistance, hypothesis_assessment,
+      assessment_rationale, assessment_selected_by, assessment_selected_at, status,
+      source_fingerprint, provenance, notes, created_at, updated_at, created_by, updated_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      record.id,
+      studyId,
+      record.title,
+      record.body ?? null,
+      record.researchQuestion || "",
+      record.researchObjective || "",
+      record.hypothesisText ?? null,
+      record.researchQuestionPresetId ?? null,
+      toJson(record.linkedEvidence),
+      record.computationalSummary ?? null,
+      record.experimentalSummary ?? null,
+      record.statisticalSummary ?? null,
+      record.comparisonSummary ?? null,
+      record.interpretationText ?? null,
+      record.limitations ?? null,
+      record.conclusion ?? null,
+      toJson(record.endpointFindings),
+      record.dockingInterpretation ?? null,
+      record.characterizationInterpretation ?? null,
+      record.generatedBy ?? null,
+      record.provider ?? null,
+      record.model ?? null,
+      record.generatedAt ?? null,
+      record.evidenceVersion ?? null,
+      toJson(record.aiAssistance),
+      record.hypothesisAssessment,
+      record.assessmentRationale ?? null,
+      record.assessmentSelectedBy ?? null,
+      record.assessmentSelectedAt ?? null,
+      record.status,
+      record.sourceFingerprint ?? null,
+      toJson(record.provenance),
+      record.notes ?? null,
+      record.createdAt,
+      record.updatedAt,
+      record.createdBy,
+      record.updatedBy,
+    ]
+  )
+
+  await writeAuditLog({
+    studyId,
+    actorId: actor.id,
+    action: "interpretation.create",
+    entityType: "interpretation",
+    entityId: id,
+  })
+
+  return record
+}
+
+export async function listInterpretations(studyId: string): Promise<Interpretation[]> {
+  const rows = await query(`SELECT * FROM interpretations WHERE study_id = ? ORDER BY created_at DESC`, [
+    studyId,
+  ])
+  const records = rows.map(mapInterpretation)
+  return Promise.all(
+    records.map(async (r) => ({
+      ...r,
+      freshness: await evaluateFreshness(studyId, r),
+    }))
+  )
+}
+
+export async function getInterpretation(
+  studyId: string,
+  id: string
+): Promise<Interpretation | null> {
+  const row = await queryOne(`SELECT * FROM interpretations WHERE study_id = ? AND id = ?`, [studyId, id])
+  if (!row) return null
+  const record = mapInterpretation(row)
+  return {
+    ...record,
+    freshness: await evaluateFreshness(studyId, record),
+  }
+}
+
+export async function updateInterpretation(
+  studyId: string,
+  id: string,
+  actor: Actor,
+  rawInput: InterpretationUpdateInput
+): Promise<Interpretation> {
+  const input = InterpretationUpdateInputSchema.parse(rawInput)
+  const existing = await getInterpretation(studyId, id)
+  if (!existing) throw new Error("Interpretation record not found")
+
+  const now = new Date().toISOString()
+  const fields: string[] = ["updated_at = ?", "updated_by = ?"]
+  const params: unknown[] = [now, actor.id]
+
+  if (input.title !== undefined) {
+    fields.push("title = ?")
+    params.push(input.title)
+  }
+  if (input.researchQuestion !== undefined) {
+    fields.push("research_question = ?")
+    params.push(input.researchQuestion)
+  }
+  if (input.researchObjective !== undefined) {
+    fields.push("research_objective = ?")
+    params.push(input.researchObjective)
+  }
+  if (input.hypothesisText !== undefined) {
+    fields.push("hypothesis_text = ?")
+    params.push(input.hypothesisText)
+  }
+  if (input.researchQuestionPresetId !== undefined) {
+    fields.push("research_question_preset_id = ?")
+    params.push(input.researchQuestionPresetId ?? null)
+  }
+  if (input.linkedEvidence !== undefined) {
+    for (const link of input.linkedEvidence) {
+      assertValidEvidenceClassForSource(link.sourceType, link.evidenceClass)
+    }
+    fields.push("linked_evidence = ?", "source_fingerprint = ?")
+    params.push(toJson(input.linkedEvidence), buildInterpretationFingerprint(input.linkedEvidence))
+  }
+  if (input.computationalSummary !== undefined) {
+    fields.push("computational_summary = ?")
+    params.push(input.computationalSummary)
+  }
+  if (input.experimentalSummary !== undefined) {
+    fields.push("experimental_summary = ?")
+    params.push(input.experimentalSummary)
+  }
+  if (input.statisticalSummary !== undefined) {
+    fields.push("statistical_summary = ?")
+    params.push(input.statisticalSummary)
+  }
+  if (input.comparisonSummary !== undefined) {
+    fields.push("comparison_summary = ?")
+    params.push(input.comparisonSummary)
+  }
+  if (input.interpretationText !== undefined) {
+    fields.push("interpretation_text = ?", "body = ?")
+    params.push(input.interpretationText, input.interpretationText)
+  }
+  if (input.limitations !== undefined) {
+    fields.push("limitations = ?")
+    params.push(input.limitations)
+  }
+  if (input.conclusion !== undefined) {
+    fields.push("conclusion = ?")
+    params.push(input.conclusion)
+  }
+  if (input.endpointFindings !== undefined) {
+    fields.push("endpoint_findings = ?")
+    params.push(toJson(input.endpointFindings))
+  }
+  if (input.dockingInterpretation !== undefined) {
+    fields.push("docking_interpretation = ?")
+    params.push(input.dockingInterpretation ?? null)
+  }
+  if (input.characterizationInterpretation !== undefined) {
+    fields.push("characterization_interpretation = ?")
+    params.push(input.characterizationInterpretation ?? null)
+  }
+  if (input.hypothesisAssessment !== undefined) {
+    fields.push("hypothesis_assessment = ?", "assessment_selected_by = ?", "assessment_selected_at = ?")
+    params.push(input.hypothesisAssessment, actor.id, now)
+  }
+  if (input.assessmentRationale !== undefined) {
+    fields.push("assessment_rationale = ?")
+    params.push(input.assessmentRationale ?? null)
+  }
+  if (input.status !== undefined) {
+    fields.push("status = ?")
+    params.push(input.status)
+  }
+  if (input.notes !== undefined) {
+    fields.push("notes = ?")
+    params.push(input.notes ?? null)
+  }
+
+  params.push(studyId, id)
+  await execute(`UPDATE interpretations SET ${fields.join(", ")} WHERE study_id = ? AND id = ?`, params)
+
+  await writeAuditLog({
+    studyId,
+    actorId: actor.id,
+    action: "interpretation.update",
+    entityType: "interpretation",
+    entityId: id,
+  })
+
+  const updated = await getInterpretation(studyId, id)
+  if (!updated) throw new Error("Interpretation update failed")
+  return updated
+}
+
+export async function deleteInterpretation(studyId: string, id: string, actor: Actor): Promise<void> {
+  await execute(`DELETE FROM interpretations WHERE study_id = ? AND id = ?`, [studyId, id])
+  await writeAuditLog({
+    studyId,
+    actorId: actor.id,
+    action: "interpretation.delete",
+    entityType: "interpretation",
+    entityId: id,
   })
 }
 
-async function resolveOneLink(
+async function loadSourceUpdatedAt(
   studyId: string,
-  link: InterpretationLinkedEvidence
-): Promise<EvidenceCatalogItem> {
-  const base = {
-    sourceType: link.sourceType,
-    sourceId: link.sourceId,
-    label: link.label,
-    evidenceClass: link.evidenceClass,
-    moduleLabel: link.moduleLabel || SOURCE_TYPE_LABELS[link.sourceType],
-    updatedAt: link.sourceUpdatedAt || "",
-  }
-
-  try {
-    switch (link.sourceType) {
-      case "formulation": {
-        const r = await getFormulation(studyId, link.sourceId)
-        if (!r) return { ...base, missing: true, label: `${link.label} (SOURCE MISSING)` }
-        return {
-          ...base,
-          label: r.name,
-          evidenceClass: (r.provenance.evidenceClass as EvidenceType) || "REFERENCE",
-          updatedAt: r.updatedAt,
-          methodOrSource: r.provenance.source,
-        }
-      }
-      case "compound": {
-        const r = await getCompound(studyId, link.sourceId)
-        if (!r) return { ...base, missing: true, label: `${link.label} (SOURCE MISSING)` }
-        return {
-          ...base,
-          label: r.name,
-          evidenceClass: (r.provenance.evidenceClass as EvidenceType) || "REFERENCE",
-          updatedAt: r.updatedAt,
-        }
-      }
-      case "protein": {
-        const r = await getProtein(studyId, link.sourceId)
-        if (!r) return { ...base, missing: true, label: `${link.label} (SOURCE MISSING)` }
-        return {
-          ...base,
-          label: r.name,
-          evidenceClass: (r.provenance.evidenceClass as EvidenceType) || "REFERENCE",
-          updatedAt: r.updatedAt,
-        }
-      }
-      case "cellLine": {
-        const r = await getCellLine(studyId, link.sourceId)
-        if (!r) return { ...base, missing: true, label: `${link.label} (SOURCE MISSING)` }
-        return {
-          ...base,
-          label: r.name,
-          evidenceClass: (r.provenance.evidenceClass as EvidenceType) || "REFERENCE",
-          updatedAt: r.updatedAt,
-        }
-      }
-      case "reference": {
-        const r = await getReference(studyId, link.sourceId)
-        if (!r) return { ...base, missing: true, label: `${link.label} (SOURCE MISSING)` }
-        return {
-          ...base,
-          label: r.title,
-          evidenceClass: (r.provenance.evidenceClass as EvidenceType) || "LITERATURE",
-          updatedAt: r.updatedAt,
-          methodOrSource: r.citationText || r.doi,
-        }
-      }
-      case "admetRun": {
-        const rows = await listAdmetRuns(studyId)
-        const r = rows.find((x) => x.id === link.sourceId)
-        if (!r) return { ...base, missing: true, label: `${link.label} (SOURCE MISSING)` }
-        return {
-          ...base,
-          label: r.compoundName || r.toolName || `ADMET ${r.id.slice(0, 6)}`,
-          evidenceClass: (r.provenance.evidenceClass as EvidenceType) || "PREDICTED",
-          updatedAt: r.updatedAt,
-          methodOrSource: r.toolName,
-          factualSnippet: Object.keys(r.descriptors || {}).length
-            ? `${Object.keys(r.descriptors).length} descriptor(s)`
-            : undefined,
-        }
-      }
-      case "dockingRun": {
-        const r = await getDockingRun(studyId, link.sourceId)
-        if (!r) return { ...base, missing: true, label: `${link.label} (SOURCE MISSING)` }
-        const best = r.modes?.[0]?.affinityKcalMol
-        return {
-          ...base,
-          label: r.runName || `Docking ${r.id.slice(0, 6)}`,
-          evidenceClass: (r.provenance.evidenceClass as EvidenceType) || "PREDICTED",
-          updatedAt: r.updatedAt,
-          methodOrSource: r.vinaVersion || "AutoDock Vina (imported)",
-          factualSnippet:
-            best != null ? `Best affinity: ${best} kcal/mol` : undefined,
-        }
-      }
-      case "predictionRun": {
-        const r = await getPredictionRun(studyId, link.sourceId)
-        if (!r) return { ...base, missing: true, label: `${link.label} (SOURCE MISSING)` }
-        return {
-          ...base,
-          label: r.runName,
-          evidenceClass: (r.provenance.evidenceClass as EvidenceType) || "PREDICTED",
-          updatedAt: r.updatedAt,
-          moduleLabel: `Prediction · ${(r.endpoint || r.module).toUpperCase()}`,
-          methodOrSource: r.methodName,
-          factualSnippet: `${r.resultPoints?.length ?? 0} result point(s)`,
-        }
-      }
-      case "labDataset": {
-        const r = await getLabDataset(studyId, link.sourceId)
-        if (!r) return { ...base, missing: true, label: `${link.label} (SOURCE MISSING)` }
-        return {
-          ...base,
-          label: r.datasetName,
-          evidenceClass: "EXPERIMENTAL",
-          updatedAt: r.updatedAt,
-          moduleLabel: `Lab · ${r.assayType.toUpperCase()}`,
-          methodOrSource: r.laboratoryName,
-          dateLabel: r.datePerformed,
-        }
-      }
-      case "statistics": {
-        const r = await getStatisticsAnalysis(studyId, link.sourceId)
-        if (!r) return { ...base, missing: true, label: `${link.label} (SOURCE MISSING)` }
-        return {
-          ...base,
-          label: `${r.assayType.toUpperCase()} · ${r.measurementLabel}`,
-          evidenceClass: "EXPERIMENTAL",
-          updatedAt: r.updatedAt,
-          freshness: r.freshness,
-          factualSnippet:
-            r.anova?.pValue != null
-              ? `ANOVA p = ${r.anova.pValue < 0.0001 ? "< 0.0001" : r.anova.pValue.toFixed(4)}${
-                  r.anova.significant ? " · significant at α = 0.05" : ""
-                }`
-              : undefined,
-        }
-      }
-      case "comparison": {
-        const r = await getComparison(studyId, link.sourceId)
-        if (!r) return { ...base, missing: true, label: `${link.label} (SOURCE MISSING)` }
-        return {
-          ...base,
-          label: `${r.endpoint.toUpperCase()} · ${r.comparisonMode}`,
-          evidenceClass: "INTERPRETATION",
-          updatedAt: r.updatedAt,
-          freshness: r.freshness,
-          factualSnippet: `Compatibility: ${r.compatibilityStatus}`,
-        }
-      }
-      default:
-        return { ...base, missing: true, label: `${link.label} (SOURCE MISSING)` }
-    }
-  } catch {
-    return { ...base, missing: true, label: `${link.label} (SOURCE MISSING)` }
+  sourceType: InterpretationSourceType,
+  sourceId: string
+): Promise<string | undefined> {
+  switch (sourceType) {
+    case "formulation":
+      return (await getFormulation(studyId, sourceId))?.updatedAt
+    case "compound":
+      return (await getCompound(studyId, sourceId))?.updatedAt
+    case "protein":
+      return (await getProtein(studyId, sourceId))?.updatedAt
+    case "cellLine":
+      return (await getCellLine(studyId, sourceId))?.updatedAt
+    case "reference":
+      return (await getReference(studyId, sourceId))?.updatedAt
+    case "admetRun":
+      return (await queryOne(`SELECT updated_at FROM admet_runs WHERE study_id = ? AND id = ?`, [studyId, sourceId]))?.updated_at
+    case "dockingRun":
+      return (await getDockingRun(studyId, sourceId))?.updatedAt
+    case "predictionRun":
+      return (await getPredictionRun(studyId, sourceId))?.updatedAt
+    case "labDataset":
+      return (await getLabDataset(studyId, sourceId))?.updatedAt
+    case "statistics":
+      return (await getStatisticsAnalysis(studyId, sourceId))?.updatedAt
+    case "comparison":
+      return (await getComparison(studyId, sourceId))?.updatedAt
+    default:
+      return undefined
   }
 }
 
-export async function resolveLinkedEvidence(
+async function evaluateFreshness(
   studyId: string,
-  links: InterpretationLinkedEvidence[]
-): Promise<EvidenceCatalogItem[]> {
-  const out: EvidenceCatalogItem[] = []
-  for (const link of links) {
-    out.push(await resolveOneLink(studyId, link))
+  record: Interpretation
+): Promise<"CURRENT" | "STALE"> {
+  const linksWithCurrent: Array<{
+    sourceType: string
+    sourceId: string
+    sourceUpdatedAt?: string
+    missing?: boolean
+  }> = []
+  for (const link of record.linkedEvidence) {
+    const updatedAt = await loadSourceUpdatedAt(
+      studyId,
+      link.sourceType,
+      link.sourceId
+    )
+    linksWithCurrent.push({
+      sourceType: link.sourceType,
+      sourceId: link.sourceId,
+      sourceUpdatedAt: updatedAt,
+      missing: updatedAt === undefined,
+    })
   }
-  return out
+  return evaluateInterpretationFreshness(record.sourceFingerprint, linksWithCurrent)
 }
 
-export async function buildEvidenceLibrary(studyId: string): Promise<EvidenceGroup[]> {
+export async function getEvidenceCatalog(studyId: string): Promise<EvidenceGroup[]> {
   const [
     formulations,
     compounds,
     proteins,
     cellLines,
     references,
-    admet,
-    docking,
-    predictions,
-    labs,
-    stats,
+    admetRuns,
+    dockingRuns,
+    predictionRuns,
+    labDatasets,
+    statistics,
     comparisons,
   ] = await Promise.all([
     listFormulations(studyId),
@@ -298,493 +430,87 @@ export async function buildEvidenceLibrary(studyId: string): Promise<EvidenceGro
     listComparisons(studyId),
   ])
 
+  function item(
+    sourceType: InterpretationSourceType,
+    id: string,
+    label: string,
+    evidenceClass: any,
+    updatedAt: string,
+    moduleLabel = "General"
+  ): EvidenceCatalogItem {
+    return {
+      sourceType,
+      sourceId: id,
+      label,
+      evidenceClass,
+      updatedAt,
+      moduleLabel,
+    }
+  }
+
   const groups: EvidenceGroup[] = [
     {
-      id: "computational",
-      title: "Computational",
+      id: "research_setup",
+      title: "01 Research Setup",
       items: [
-        ...admet.map((r) => ({
-          sourceType: "admetRun" as const,
-          sourceId: r.id,
-          label: r.compoundName || r.toolName || `ADMET ${r.id.slice(0, 6)}`,
-          evidenceClass: (r.provenance.evidenceClass as EvidenceType) || ("PREDICTED" as const),
-          moduleLabel: "ADMET",
-          updatedAt: r.updatedAt,
-          methodOrSource: r.toolName,
-        })),
-        ...docking.map((r) => ({
-          sourceType: "dockingRun" as const,
-          sourceId: r.id,
-          label: r.runName || `Docking ${r.id.slice(0, 6)}`,
-          evidenceClass: (r.provenance.evidenceClass as EvidenceType) || ("PREDICTED" as const),
-          moduleLabel: "Molecular docking",
-          updatedAt: r.updatedAt,
-          factualSnippet:
-            r.modes?.[0]?.affinityKcalMol != null
-              ? `Best affinity: ${r.modes[0].affinityKcalMol} kcal/mol`
-              : undefined,
-        })),
-        ...predictions.map((r) => ({
-          sourceType: "predictionRun" as const,
-          sourceId: r.id,
-          label: r.runName,
-          evidenceClass: (r.provenance.evidenceClass as EvidenceType) || ("PREDICTED" as const),
-          moduleLabel: `Prediction · ${(r.endpoint || r.module).toUpperCase()}`,
-          updatedAt: r.updatedAt,
-          methodOrSource: r.methodName,
-        })),
+        ...formulations.map((f) => item("formulation", f.id, f.name, f.provenance.evidenceClass, f.updatedAt, "Formulation")),
+        ...compounds.map((c) => item("compound", c.id, c.name, c.provenance.evidenceClass, c.updatedAt, "Phytochemical")),
+        ...proteins.map((p) => item("protein", p.id, p.name, p.provenance.evidenceClass, p.updatedAt, "Target Protein")),
+        ...cellLines.map((cl) => item("cellLine", cl.id, cl.name, cl.provenance.evidenceClass, cl.updatedAt, "Cell Line")),
+        ...references.map((r) => item("reference", r.id, r.title, r.provenance.evidenceClass, r.updatedAt, "Literature Reference")),
       ],
     },
     {
-      id: "experimental",
-      title: "Experimental",
-      items: labs.map((r) => ({
-        sourceType: "labDataset" as const,
-        sourceId: r.id,
-        label: r.datasetName,
-        evidenceClass: "EXPERIMENTAL" as const,
-        moduleLabel: `Lab · ${r.assayType.toUpperCase()}`,
-        updatedAt: r.updatedAt,
-        dateLabel: r.datePerformed,
-        methodOrSource: r.laboratoryName,
-      })),
+      id: "insilico",
+      title: "02 In-Silico Screening",
+      items: admetRuns.map((a) => item("admetRun", a.id, a.compoundName ? `${a.compoundName} ADMET` : "ADMET Run", a.provenance.evidenceClass, a.updatedAt, "ADMET / Lipinski")),
     },
     {
-      id: "statistics",
-      title: "Statistics",
-      items: stats.map((r) => ({
-        sourceType: "statistics" as const,
-        sourceId: r.id,
-        label: `${r.assayType.toUpperCase()} · ${r.measurementLabel}`,
-        evidenceClass: "EXPERIMENTAL" as const,
-        moduleLabel: "Statistics",
-        updatedAt: r.updatedAt,
-        freshness: r.freshness,
-        factualSnippet:
-          r.anova?.pValue != null
-            ? `ANOVA p = ${r.anova.pValue < 0.0001 ? "< 0.0001" : r.anova.pValue.toFixed(4)}`
-            : undefined,
-      })),
+      id: "docking",
+      title: "03 Molecular Docking",
+      items: dockingRuns.map((d) => item("dockingRun", d.id, d.runName, d.provenance.evidenceClass, d.updatedAt, "AutoDock Vina")),
     },
     {
-      id: "comparison",
-      title: "Prediction vs Experimental",
-      items: comparisons.map((r) => ({
-        sourceType: "comparison" as const,
-        sourceId: r.id,
-        label: `${r.endpoint.toUpperCase()} · ${r.comparisonMode}`,
-        evidenceClass: "INTERPRETATION" as const,
-        moduleLabel: "Comparison",
-        updatedAt: r.updatedAt,
-        freshness: r.freshness,
-        factualSnippet: r.compatibilityStatus,
-      })),
+      id: "predictions",
+      title: "04 Biological Predictions",
+      items: predictionRuns.map((p) => item("predictionRun", p.id, p.runName, p.provenance.evidenceClass, p.updatedAt, `Prediction (${p.endpoint.toUpperCase()})`)),
     },
     {
-      id: "research",
-      title: "Research Data",
+      id: "lab",
+      title: "05 Laboratory Validation",
+      items: labDatasets.map((l) => item("labDataset", l.id, l.datasetName, l.provenance.evidenceClass, l.updatedAt, `Lab (${l.assayType.toUpperCase()})`)),
+    },
+    {
+      id: "analysis",
+      title: "06 Analysis & Synthesis",
       items: [
-        ...formulations.map((r) => ({
-          sourceType: "formulation" as const,
-          sourceId: r.id,
-          label: r.name,
-          evidenceClass: (r.provenance.evidenceClass as EvidenceType) || ("REFERENCE" as const),
-          moduleLabel: "Formulation",
-          updatedAt: r.updatedAt,
-        })),
-        ...compounds.map((r) => ({
-          sourceType: "compound" as const,
-          sourceId: r.id,
-          label: r.name,
-          evidenceClass: (r.provenance.evidenceClass as EvidenceType) || ("REFERENCE" as const),
-          moduleLabel: "Phytochemical",
-          updatedAt: r.updatedAt,
-        })),
-        ...proteins.map((r) => ({
-          sourceType: "protein" as const,
-          sourceId: r.id,
-          label: r.name,
-          evidenceClass: (r.provenance.evidenceClass as EvidenceType) || ("REFERENCE" as const),
-          moduleLabel: "Protein",
-          updatedAt: r.updatedAt,
-        })),
-        ...cellLines.map((r) => ({
-          sourceType: "cellLine" as const,
-          sourceId: r.id,
-          label: r.name,
-          evidenceClass: (r.provenance.evidenceClass as EvidenceType) || ("REFERENCE" as const),
-          moduleLabel: "Cell line",
-          updatedAt: r.updatedAt,
-        })),
+        ...statistics.map((s) => item("statistics", s.id, `${s.labDatasetName} (${s.measurementLabel})`, s.provenance.evidenceClass, s.updatedAt, "ANOVA / Scheffé")),
+        ...comparisons.map((c) => item("comparison", c.id, `${c.endpoint.toUpperCase()} Comparison`, c.provenance.evidenceClass, c.updatedAt, "Side-by-Side Comparison")),
       ],
-    },
-    {
-      id: "references",
-      title: "References",
-      items: references.map((r) => ({
-        sourceType: "reference" as const,
-        sourceId: r.id,
-        label: r.title,
-        evidenceClass: (r.provenance.evidenceClass as EvidenceType) || ("LITERATURE" as const),
-        moduleLabel: "Reference",
-        updatedAt: r.updatedAt,
-      })),
     },
   ]
 
   return groups
 }
 
-async function validateAndRefreshLinks(
+export const buildEvidenceLibrary = getEvidenceCatalog
+
+export async function resolveLinkedEvidence(
   studyId: string,
   links: InterpretationLinkedEvidence[]
-): Promise<InterpretationLinkedEvidence[]> {
-  const resolved = await resolveLinkedEvidence(studyId, links)
-  const next: InterpretationLinkedEvidence[] = []
-  for (let i = 0; i < links.length; i++) {
-    const link = links[i]
-    const item = resolved[i]
-    if (!assertValidEvidenceClassForSource(link.sourceType, link.evidenceClass)) {
-      throw new Error(
-        `Invalid evidence class ${link.evidenceClass} for source type ${link.sourceType}.`
-      )
-    }
-    if (item.missing) {
-      // Keep the link but mark with SOURCE MISSING label — do not silently drop
-      next.push({
-        ...link,
-        label: item.label.includes("SOURCE MISSING") ? item.label : `${link.label} (SOURCE MISSING)`,
-      })
-      continue
-    }
-    next.push({
-      sourceType: link.sourceType,
-      sourceId: link.sourceId,
-      evidenceClass: item.evidenceClass,
-      label: item.label,
-      sourceUpdatedAt: item.updatedAt,
-      moduleLabel: item.moduleLabel,
-    })
-  }
-  return next
-}
-
-export async function createInterpretation(
-  studyId: string,
-  actor: Actor,
-  rawInput: InterpretationCreateInput
-): Promise<Interpretation> {
-  const input = InterpretationCreateInputSchema.parse(rawInput)
-
-  let researchQuestion = input.researchQuestion ?? ""
-  let researchObjective = input.researchObjective ?? ""
-  let hypothesisText = input.hypothesisText ?? ""
-  if (input.researchQuestionPresetId) {
-    const preset = getInterpretationPreset(input.researchQuestionPresetId)
-    if (!preset) throw new Error("Unknown research question preset.")
-    // Only fill blanks — never silently overwrite researcher text
-    if (!researchQuestion.trim()) researchQuestion = preset.researchQuestion
-    if (!researchObjective.trim()) researchObjective = preset.researchObjective
-    if (!hypothesisText.trim()) hypothesisText = preset.hypothesisText
-  }
-
-  const linkedEvidence = await validateAndRefreshLinks(studyId, input.linkedEvidence ?? [])
-  const fingerprint = buildInterpretationFingerprint(linkedEvidence)
-
-  const assessment = input.hypothesisAssessment ?? "not_assessed"
-  const now = new Date().toISOString()
-  const ref = docRef(studySub(studyId, STUDY_SUBCOLLECTIONS.interpretations))
-
-  const record = InterpretationSchema.parse({
-    id: ref.id,
-    studyId,
-    title: input.title.trim(),
-    body: input.interpretationText ?? "",
-    researchQuestion,
-    researchObjective,
-    hypothesisText,
-    researchQuestionPresetId: input.researchQuestionPresetId,
-    linkedEvidence,
-    linkedEvidenceIds: linkedEvidence.map((l) => l.sourceId),
-    computationalSummary: input.computationalSummary ?? "",
-    experimentalSummary: input.experimentalSummary ?? "",
-    statisticalSummary: input.statisticalSummary ?? "",
-    comparisonSummary: input.comparisonSummary ?? "",
-    interpretationText: input.interpretationText ?? "",
-    limitations: input.limitations ?? "",
-    conclusion: input.conclusion ?? "",
-    hypothesisAssessment: assessment,
-    assessmentRationale: input.assessmentRationale,
-    assessmentSelectedBy: assessment !== "not_assessed" ? actor.id : undefined,
-    assessmentSelectedAt: assessment !== "not_assessed" ? now : undefined,
-    status: input.status ?? "draft",
-    sourceFingerprint: fingerprint,
-    freshness: "CURRENT",
-    notes: input.notes,
-    provenance: defaultProvenance("INTERPRETATION", {
-      operatorId: actor.id,
-      recordedAt: now,
-      methodName: "Researcher Interpretation",
-      assumptions:
-        "Human-authored interpretation. Linked evidence classes are preserved. Not an experimental result.",
-      limitations:
-        "Does not auto-assess hypotheses or generate efficacy conclusions.",
-    }),
-    createdAt: now,
-    updatedAt: now,
-    createdBy: actor.id,
-    updatedBy: actor.id,
-  })
-
-  await setDocData(
-    studySub(studyId, STUDY_SUBCOLLECTIONS.interpretations),
-    ref.id,
-    stripUndefined(record as unknown as Record<string, unknown>)
-  )
-  await writeAuditLog({
-    studyId,
-    actorId: actor.id,
-    action: "interpretation.create",
-    entityType: "interpretation",
-    entityId: ref.id,
-  })
-  if (assessment !== "not_assessed") {
-    await writeAuditLog({
-      studyId,
-      actorId: actor.id,
-      action: "interpretation.hypothesis_assessment",
-      entityType: "interpretation",
-      entityId: ref.id,
-      meta: { assessment },
-    })
-  }
-  return record
-}
-
-export async function updateInterpretation(
-  studyId: string,
-  id: string,
-  actor: Actor,
-  rawPatch: InterpretationUpdateInput
-): Promise<Interpretation> {
-  const patch = InterpretationUpdateInputSchema.parse(rawPatch)
-  const existing = await getInterpretation(studyId, id)
-  if (!existing) throw new Error("Interpretation not found.")
-
-  const now = new Date().toISOString()
-  let linkedEvidence = existing.linkedEvidence
-  if (patch.linkedEvidence) {
-    linkedEvidence = await validateAndRefreshLinks(studyId, patch.linkedEvidence)
-  } else {
-    // Refresh timestamps for freshness
-    linkedEvidence = await validateAndRefreshLinks(studyId, existing.linkedEvidence)
-  }
-
-  const fingerprint = buildInterpretationFingerprint(linkedEvidence)
-
-  let assessment = existing.hypothesisAssessment
-  let assessmentSelectedBy = existing.assessmentSelectedBy
-  let assessmentSelectedAt = existing.assessmentSelectedAt
-  let assessmentRationale =
-    patch.assessmentRationale === null
-      ? undefined
-      : patch.assessmentRationale !== undefined
-        ? patch.assessmentRationale
-        : existing.assessmentRationale
-
-  const assessmentChanged =
-    patch.hypothesisAssessment != null &&
-    patch.hypothesisAssessment !== existing.hypothesisAssessment
-
-  if (assessmentChanged) {
-    assessment = patch.hypothesisAssessment as HypothesisAssessment
-    assessmentSelectedBy = actor.id
-    assessmentSelectedAt = now
-  }
-
-  const statusChanged = patch.status != null && patch.status !== existing.status
-
-  let researchQuestion = patch.researchQuestion ?? existing.researchQuestion
-  let researchObjective = patch.researchObjective ?? existing.researchObjective
-  let hypothesisText = patch.hypothesisText ?? existing.hypothesisText
-  const presetId =
-    patch.researchQuestionPresetId !== undefined
-      ? patch.researchQuestionPresetId
-      : existing.researchQuestionPresetId
-  if (patch.researchQuestionPresetId) {
-    const preset = getInterpretationPreset(patch.researchQuestionPresetId)
-    if (!preset) throw new Error("Unknown research question preset.")
-    if (!(patch.researchQuestion ?? "").trim()) researchQuestion = preset.researchQuestion
-    if (!(patch.researchObjective ?? "").trim()) researchObjective = preset.researchObjective
-    if (!(patch.hypothesisText ?? "").trim()) hypothesisText = preset.hypothesisText
-  }
-
-  const interpretationText =
-    patch.interpretationText !== undefined
-      ? patch.interpretationText
-      : existing.interpretationText
-
-  const next = InterpretationSchema.parse({
-    ...existing,
-    title: patch.title ?? existing.title,
-    researchQuestion,
-    researchObjective,
-    hypothesisText,
-    researchQuestionPresetId: presetId,
-    linkedEvidence,
-    linkedEvidenceIds: linkedEvidence.map((l) => l.sourceId),
-    computationalSummary:
-      patch.computationalSummary !== undefined
-        ? patch.computationalSummary
-        : existing.computationalSummary,
-    experimentalSummary:
-      patch.experimentalSummary !== undefined
-        ? patch.experimentalSummary
-        : existing.experimentalSummary,
-    statisticalSummary:
-      patch.statisticalSummary !== undefined
-        ? patch.statisticalSummary
-        : existing.statisticalSummary,
-    comparisonSummary:
-      patch.comparisonSummary !== undefined
-        ? patch.comparisonSummary
-        : existing.comparisonSummary,
-    interpretationText,
-    body: interpretationText,
-    limitations:
-      patch.limitations !== undefined ? patch.limitations : existing.limitations,
-    conclusion: patch.conclusion !== undefined ? patch.conclusion : existing.conclusion,
-    hypothesisAssessment: assessment,
-    assessmentRationale,
-    assessmentSelectedBy,
-    assessmentSelectedAt,
-    status: patch.status ?? existing.status,
-    sourceFingerprint: fingerprint,
-    notes: patch.notes !== undefined ? patch.notes : existing.notes,
-    updatedAt: now,
-    updatedBy: actor.id,
-    provenance: {
-      ...existing.provenance,
-      evidenceClass: "INTERPRETATION",
-      operatorId: actor.id,
-    },
-  })
-
-  await setDocData(
-    studySub(studyId, STUDY_SUBCOLLECTIONS.interpretations),
-    id,
-    stripUndefined(next as unknown as Record<string, unknown>)
-  )
-
-  await writeAuditLog({
-    studyId,
-    actorId: actor.id,
-    action: "interpretation.update",
-    entityType: "interpretation",
-    entityId: id,
-  })
-  if (statusChanged) {
-    await writeAuditLog({
-      studyId,
-      actorId: actor.id,
-      action: "interpretation.status_change",
-      entityType: "interpretation",
-      entityId: id,
-      meta: { status: next.status },
-    })
-  }
-  if (assessmentChanged) {
-    await writeAuditLog({
-      studyId,
-      actorId: actor.id,
-      action: "interpretation.hypothesis_assessment",
-      entityType: "interpretation",
-      entityId: id,
-      meta: { assessment: next.hypothesisAssessment },
-    })
-  }
-
-  const resolved = await resolveLinkedEvidence(studyId, next.linkedEvidence)
-  return {
-    ...next,
-    freshness: evaluateInterpretationFreshness(
-      fingerprint,
-      resolved.map((r) => ({
-        sourceType: r.sourceType,
-        sourceId: r.sourceId,
-        sourceUpdatedAt: r.updatedAt,
-        missing: r.missing,
-      }))
-    ),
-  }
-}
-
-export async function getInterpretation(
-  studyId: string,
-  id: string
-): Promise<Interpretation | null> {
-  const raw = await getDocData<Interpretation>(
-    studySub(studyId, STUDY_SUBCOLLECTIONS.interpretations),
-    id
-  )
-  if (!raw) return null
-  const record = parseInterpretation(raw)
-  if (record.studyId !== studyId) return null
-  const resolved = await resolveLinkedEvidence(studyId, record.linkedEvidence)
-  return {
-    ...record,
-    freshness: evaluateInterpretationFreshness(
-      record.sourceFingerprint,
-      resolved.map((r) => ({
-        sourceType: r.sourceType,
-        sourceId: r.sourceId,
-        sourceUpdatedAt: r.updatedAt,
-        missing: r.missing,
-      }))
-    ),
-  }
-}
-
-export async function listInterpretations(studyId: string): Promise<Interpretation[]> {
-  const rows = await listDocs<Interpretation>(
-    studySub(studyId, STUDY_SUBCOLLECTIONS.interpretations)
-  )
-  const parsed = rows.map((r) => parseInterpretation(r)).filter((r) => r.studyId === studyId)
-  const withFresh = await Promise.all(
-    parsed.map(async (record) => {
-      const resolved = await resolveLinkedEvidence(studyId, record.linkedEvidence)
+): Promise<EvidenceCatalogItem[]> {
+  return Promise.all(
+    links.map(async (link) => {
+      const updatedAt = await loadSourceUpdatedAt(studyId, link.sourceType, link.sourceId)
       return {
-        ...record,
-        freshness: evaluateInterpretationFreshness(
-          record.sourceFingerprint,
-          resolved.map((r) => ({
-            sourceType: r.sourceType,
-            sourceId: r.sourceId,
-            sourceUpdatedAt: r.updatedAt,
-            missing: r.missing,
-          }))
-        ),
+        sourceType: link.sourceType,
+        sourceId: link.sourceId,
+        label: link.label,
+        evidenceClass: link.evidenceClass,
+        moduleLabel: link.sourceType,
+        updatedAt: updatedAt || "",
+        missing: !updatedAt,
       }
     })
   )
-  return withFresh.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 }
-
-export async function deleteInterpretation(
-  studyId: string,
-  id: string,
-  actor: Actor
-): Promise<void> {
-  const existing = await getInterpretation(studyId, id)
-  if (!existing) throw new Error("Interpretation not found.")
-  await deleteDocData(studySub(studyId, STUDY_SUBCOLLECTIONS.interpretations), id)
-  await writeAuditLog({
-    studyId,
-    actorId: actor.id,
-    action: "interpretation.delete",
-    entityType: "interpretation",
-    entityId: id,
-  })
-}
-
-export type { InterpretationSourceType }

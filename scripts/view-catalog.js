@@ -1,0 +1,9 @@
+﻿const fs = require('fs');
+const txt = fs.readFileSync('c:/projects/nanotophea/lib/catalog/reusableResearchCatalog.ts', 'utf8');
+const lines = txt.split('\n');
+const latsIdx = lines.findIndex(l => l.includes('key: "lats1"'));
+console.log('--- LATS1 ---');
+console.log(lines.slice(latsIdx - 1, latsIdx + 20).join('\n'));
+const ccndIdx = lines.findIndex(l => l.includes('key: "ccnd1"'));
+console.log('--- CCND1 ---');
+console.log(lines.slice(ccndIdx - 1, ccndIdx + 20).join('\n'));

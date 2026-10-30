@@ -1,12 +1,12 @@
 /**
- * Map Firebase / domain errors to short researcher-facing messages.
+ * Map database / domain errors to short researcher-facing messages.
  * Never surface raw stack traces.
  */
 
-function logDevFirebaseError(error: unknown) {
+function logDevDatabaseError(error: unknown) {
   if (typeof process !== "undefined" && process.env.NODE_ENV === "development") {
     // Technical detail for developers only
-    console.warn("[NANOTOPHEA] Firebase/permission detail:", error)
+    console.warn("[NANOTOPHEA] Database/permission detail:", error)
   }
 }
 
@@ -25,14 +25,14 @@ export function toUserFacingError(error: unknown, fallback = "Something went wro
         : fallback
 
   if (code === "permission-denied" || /permission|insufficient permissions/i.test(message)) {
-    logDevFirebaseError(error)
-    if (/member|ownership|owner/i.test(message)) {
-      return "Your study ownership record is missing. Please verify the study configuration."
+    logDevDatabaseError(error)
+    if (fallback !== "Something went wrong. Please try again.") {
+      return fallback
     }
-    return "Administrator access could not be verified for this study."
+    return "This study could not be opened. Sign in and try again."
   }
-  if (code === "unavailable" || /unavailable|network|offline/i.test(message)) {
-    return "Firebase is temporarily unavailable. Check your connection and try again."
+  if (code === "unavailable" || /unavailable|network|offline|ECONNREFUSED|ENOTFOUND/i.test(message)) {
+    return "The database service is temporarily unavailable. Check your connection and try again."
   }
   if (code === "unauthenticated" || /not signed in|auth\/invalid|auth\/user/i.test(message)) {
     return "Please sign in to continue."
@@ -52,6 +52,6 @@ export function toUserFacingError(error: unknown, fallback = "Something went wro
     return message
   }
 
-  logDevFirebaseError(error)
+  logDevDatabaseError(error)
   return fallback
 }

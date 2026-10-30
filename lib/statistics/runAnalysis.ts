@@ -38,6 +38,7 @@ export interface TreatmentDescriptive {
   variance: number | undefined
   values: number[]
   missingReplicateSlots: number
+  notApplicable: boolean
   dataClass: "DERIVED_FROM_EXPERIMENTAL"
 }
 
@@ -54,6 +55,8 @@ export interface RawGridCell {
   replicateCode: "R1" | "R2" | "R3"
   value: number | null
   present: boolean
+  /** False when this derived value is not calculated for the treatment, such as DPPH T1. */
+  applicable: boolean
 }
 
 export interface ExperimentalStatsComputation {
@@ -75,7 +78,26 @@ export interface ExperimentalStatsComputation {
 const TREATMENTS: LabTreatmentCode[] = ["T1", "T2", "T3", "T4", "T5", "T6"]
 const REPS: Array<"R1" | "R2" | "R3"> = ["R1", "R2", "R3"]
 
+/**
+ * Derived inhibition is not calculated for the reference treatment used in the formula.
+ * DPPH T1 is the solvent control. LDH T1 and T2 are the spontaneous and maximum-release controls.
+ */
+export function derivedValueNotApplicable(
+  assay: StatisticsEligibleAssay,
+  measurementKey: string,
+  treatmentCode: LabTreatmentCode,
+): boolean {
+  if (assay === "dpph" && measurementKey === "radicalScavengingPercent" && treatmentCode === "T1") return true
+  if (
+    assay === "ldh"
+    && measurementKey === "percentCytotoxicity"
+    && (treatmentCode === "T1" || treatmentCode === "T2")
+  ) return true
+  return false
+}
+
 export function buildRawGrid(
+  assay: StatisticsEligibleAssay,
   replicates: LabReplicate[],
   measurementKey: string
 ): RawGridCell[] {
@@ -84,11 +106,13 @@ export function buildRawGrid(
     for (const r of REPS) {
       const rep = replicates.find((x) => x.treatmentCode === t && x.replicateCode === r)
       const value = rep ? numericMeasurement(rep, measurementKey) : undefined
+      const notApplicable = value === undefined && derivedValueNotApplicable(assay, measurementKey, t)
       cells.push({
         treatmentCode: t,
         replicateCode: r,
         value: value ?? null,
         present: value !== undefined,
+        applicable: !notApplicable,
       })
     }
   }
@@ -96,18 +120,17 @@ export function buildRawGrid(
 }
 
 export function computeCompleteness(rawGrid: RawGridCell[]): CompletenessReport {
-  const expectedCells = TREATMENTS.length * REPS.length
-  const observedCells = rawGrid.filter((c) => c.present).length
+  const required = rawGrid.filter((cell) => cell.applicable)
+  const expectedCells = required.length
+  const observedCells = required.filter((cell) => cell.present).length
   const missingCells = expectedCells - observedCells
   const warnings: string[] = []
   if (missingCells > 0) {
     warnings.push(
-      `Dataset incomplete for this measurement: ${missingCells} of ${expectedCells} T1–T6 × R1–R3 cells are missing. Missing values were not replaced with zeros.`
+      `Dataset incomplete for this measurement: ${missingCells} of ${expectedCells} required cells are missing. Missing values were not replaced with zeros.`
     )
-    for (const c of rawGrid) {
-      if (!c.present) {
-        warnings.push(`Missing: ${c.treatmentCode} ${c.replicateCode}`)
-      }
+    for (const cell of required) {
+      if (!cell.present) warnings.push(`Missing: ${cell.treatmentCode} ${cell.replicateCode}`)
     }
   }
   return {
@@ -131,7 +154,8 @@ export function computeTreatmentDescriptives(
       .filter((r) => r.treatmentCode === code)
       .map((r) => numericMeasurement(r, measurementKey))
       .filter((v): v is number => v !== undefined)
-    const missingReplicateSlots = REPS.length - values.length
+    const notApplicable = values.length === 0 && derivedValueNotApplicable(assay, measurementKey, code)
+    const missingReplicateSlots = notApplicable ? 0 : REPS.length - values.length
     return {
       treatmentCode: code,
       label: def?.label ?? code,
@@ -141,6 +165,7 @@ export function computeTreatmentDescriptives(
       variance: sampleVariance(values),
       values,
       missingReplicateSlots,
+      notApplicable,
       dataClass: "DERIVED_FROM_EXPERIMENTAL" as const,
     }
   })
@@ -194,7 +219,7 @@ export function computeExperimentalStatistics(input: {
   const measurementLabel =
     cfg.measurementKeys.find((m) => m.key === input.measurementKey)?.label ?? input.measurementKey
 
-  const rawGrid = buildRawGrid(input.replicates, input.measurementKey)
+  const rawGrid = buildRawGrid(assayType, input.replicates, input.measurementKey)
   const completeness = computeCompleteness(rawGrid)
   const treatmentSummaries = computeTreatmentDescriptives(
     assayType,

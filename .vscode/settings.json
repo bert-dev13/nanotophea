@@ -18,5 +18,6 @@
     "**/next-src/**": true,
     "**/_migrate/**": true,
     "**/.next/**": true
-  }
+  },
+  "css.lint.unknownAtRules": "ignore"
 }

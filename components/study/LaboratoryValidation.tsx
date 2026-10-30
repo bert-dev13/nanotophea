@@ -9,10 +9,11 @@ const STATUS_LABEL: Record<StudyStatus, string> = {
   draft: "Draft",
   active: "Active",
   analysis: "Analysis",
+  completed: "Completed",
   archived: "Archived",
 }
 
-type CountKey = "labDpph" | "labLdh" | "characterization"
+type CountKey = "labDpph" | "labLdh"
 
 interface LabSection {
   id: string
@@ -40,26 +41,19 @@ const SECTIONS: LabSection[] = [
     countKey: "labLdh",
     icon: Droplets,
   },
-  {
-    id: "characterization",
-    number: "03",
-    label: "Characterization",
-    hint: "HPLC and related records",
-    countKey: "characterization",
-    icon: TestTubes,
-  },
+
 ]
 
-interface LaboratoryValidationProps {
+export interface LaboratoryValidationProps {
   title: string
   status: StudyStatus
   tab: string
   readiness: StudyReadiness | null
   checkError: string | null
   checking: boolean
-  onTab: (tab: string) => void
-  onBack: () => void
-  onContinue: () => void
+  onTabAction?: (tab: string) => void
+  onBackAction?: () => void
+  onContinueAction?: () => void
   children: ReactNode
 }
 
@@ -70,11 +64,14 @@ export function LaboratoryValidation({
   readiness,
   checkError,
   checking,
-  onTab,
-  onBack,
-  onContinue,
+  onTabAction,
+  onBackAction,
+  onContinueAction,
   children,
 }: LaboratoryValidationProps) {
+  const handleTab = onTabAction ?? (() => {})
+  const handleBack = onBackAction ?? (() => {})
+  const handleContinue = onContinueAction ?? (() => {})
   const continueDisabled = checking || !readiness || Boolean(checkError)
   const recorded = SECTIONS.filter((section) => (readiness?.[section.countKey] ?? 0) > 0)
   const activeIndex = Math.max(0, SECTIONS.findIndex((section) => section.id === tab))
@@ -99,7 +96,7 @@ export function LaboratoryValidation({
             ? (index + 1) % SECTIONS.length
             : (index - 1 + SECTIONS.length) % SECTIONS.length
     tabRefs.current[target]?.focus()
-    onTab(SECTIONS[target].id)
+    handleTab(SECTIONS[target].id)
   }
 
   return (
@@ -125,7 +122,7 @@ export function LaboratoryValidation({
             {readiness ? (
               <>
                 <span>{recorded.length}</span>
-                <span>of 3</span>
+                <span>of {SECTIONS.length}</span>
               </>
             ) : (
               "Checking"
@@ -169,7 +166,7 @@ export function LaboratoryValidation({
               data-current={selected ? "true" : undefined}
               data-state={state}
               style={{ animationDelay: `${40 + index * 45}ms` }}
-              onClick={() => onTab(section.id)}
+              onClick={() => handleTab(section.id)}
               onKeyDown={(event) => onTabKeyDown(event, index)}
             >
               <span className="nano-setup-step-top">
@@ -194,9 +191,9 @@ export function LaboratoryValidation({
         next={next}
         checking={checking}
         continueDisabled={continueDisabled}
-        onTab={onTab}
-        onBack={onBack}
-        onContinue={onContinue}
+        onTabAction={handleTab}
+        onBackAction={handleBack}
+        onContinueAction={handleContinue}
         showStatus
       />
 
@@ -218,9 +215,9 @@ export function LaboratoryValidation({
         next={next}
         checking={checking}
         continueDisabled={continueDisabled}
-        onTab={onTab}
-        onBack={onBack}
-        onContinue={onContinue}
+        onTabAction={handleTab}
+        onBackAction={handleBack}
+        onContinueAction={handleContinue}
       />
     </div>
   )
@@ -234,9 +231,9 @@ function LabActions({
   next,
   checking,
   continueDisabled,
-  onTab,
-  onBack,
-  onContinue,
+  onTabAction,
+  onBackAction,
+  onContinueAction,
   showStatus = false,
 }: {
   checkError: string | null
@@ -246,9 +243,9 @@ function LabActions({
   next: LabSection | null
   checking: boolean
   continueDisabled: boolean
-  onTab: (tab: string) => void
-  onBack: () => void
-  onContinue: () => void
+  onTabAction?: (tab: string) => void
+  onBackAction?: () => void
+  onContinueAction?: () => void
   showStatus?: boolean
 }) {
   return (
@@ -272,17 +269,17 @@ function LabActions({
         </p>
       )}
       <div className="nano-setup-bar-actions">
-        <button type="button" className="nano-setup-back" onClick={previous ? () => onTab(previous.id) : onBack}>
+        <button type="button" className="nano-setup-back" onClick={previous ? () => onTabAction?.(previous.id) : onBackAction}>
           <ArrowLeft size={15} aria-hidden />
           {previous ? previous.label : "Predictions"}
         </button>
         {next ? (
-          <button type="button" className="nano-setup-next" onClick={() => onTab(next.id)}>
+          <button type="button" className="nano-setup-next" onClick={() => onTabAction?.(next.id)}>
             Next step
             <ArrowRight size={15} aria-hidden />
           </button>
         ) : null}
-        <button type="button" className="nano-setup-continue" disabled={continueDisabled} onClick={onContinue}>
+        <button type="button" className="nano-setup-continue" disabled={continueDisabled} onClick={onContinueAction}>
           {checking ? "Checking…" : "Continue to Analysis"}
           <ArrowRight size={15} aria-hidden />
         </button>

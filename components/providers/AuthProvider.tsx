@@ -6,21 +6,24 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react"
-import {
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  signOut,
-  type User,
-} from "firebase/auth"
-import { getFirebaseAuth } from "@/lib/firebase/client"
-import { upsertUserProfile } from "@/lib/repositories/userRepository"
 import type { UserProfile } from "@/lib/domain/models"
 
+export interface AuthUser {
+  uid: string
+  id: string
+  email: string | null
+  displayName: string | null
+  photoURL?: string | null
+  role?: string
+  getIdToken: () => Promise<string>
+}
+
 interface AuthContextValue {
-  user: User | null
+  user: AuthUser | null
   profile: UserProfile | null
   loading: boolean
   error: string | null
@@ -33,70 +36,144 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
+  const [user, setUser] = useState<AuthUser | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const sessionTokenRef = useRef<string>("")
 
-  const refreshProfile = useCallback(async () => {
-    const auth = getFirebaseAuth()
-    const current = auth.currentUser
-    if (!current) {
-      setProfile(null)
-      return
+  const buildAuthUser = useCallback((p: UserProfile, token: string): AuthUser => {
+    return {
+      uid: p.id,
+      id: p.id,
+      email: p.email,
+      displayName: p.displayName,
+      photoURL: p.photoURL,
+      role: p.role || p.defaultRole,
+      getIdToken: async () => sessionTokenRef.current || token,
     }
-    const p = await upsertUserProfile({
-      id: current.uid,
-      email: current.email || "",
-      displayName: current.displayName,
-      photoURL: current.photoURL,
-      defaultRole: "OWNER",
-    })
-    setProfile(p)
   }, [])
 
+  // Initial session verification on mount
   useEffect(() => {
-    let unsub = () => {}
-    try {
-      const auth = getFirebaseAuth()
-      unsub = onAuthStateChanged(auth, async (next) => {
-        setUser(next)
-        if (!next) {
-          setProfile(null)
-          setLoading(false)
+    let mounted = true
+
+    async function checkSession() {
+      try {
+        const res = await fetch("/api/auth/session", {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        })
+
+        if (!res.ok) {
+          if (mounted) {
+            setUser(null)
+            setProfile(null)
+            setLoading(false)
+          }
           return
         }
-        try {
-          const p = await upsertUserProfile({
-            id: next.uid,
-            email: next.email || "",
-            displayName: next.displayName,
-            photoURL: next.photoURL,
-            defaultRole: "OWNER",
-          })
-          setProfile(p)
-        } catch (e) {
-          setError(e instanceof Error ? e.message : "Failed to load profile")
-        } finally {
+
+        const data = await res.json()
+        if (mounted) {
+          if (data?.user) {
+            sessionTokenRef.current = data.token || ""
+            setProfile(data.user)
+            setUser(buildAuthUser(data.user, data.token || ""))
+          } else {
+            sessionTokenRef.current = ""
+            setUser(null)
+            setProfile(null)
+          }
           setLoading(false)
         }
-      })
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Firebase Auth init failed")
-      setLoading(false)
+      } catch (err) {
+        if (mounted) {
+          console.warn("[AuthProvider] Session verification error:", err)
+          setUser(null)
+          setProfile(null)
+          setLoading(false)
+        }
+      }
     }
-    return () => unsub()
-  }, [])
 
-  const login = useCallback(async (email: string, password: string) => {
-    setError(null)
-    await signInWithEmailAndPassword(getFirebaseAuth(), email.trim(), password)
-  }, [])
+    checkSession()
+    return () => {
+      mounted = false
+    }
+  }, [buildAuthUser])
+
+  const refreshProfile = useCallback(async () => {
+    try {
+      const res = await fetch("/api/auth/session", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      })
+      if (!res.ok) {
+        setProfile(null)
+        setUser(null)
+        return
+      }
+      const data = await res.json()
+      if (data?.user) {
+        sessionTokenRef.current = data.token || sessionTokenRef.current
+        setProfile(data.user)
+        setUser(buildAuthUser(data.user, sessionTokenRef.current))
+      } else {
+        setProfile(null)
+        setUser(null)
+      }
+    } catch {
+      // Retain existing state if network hiccup
+    }
+  }, [buildAuthUser])
+
+  const login = useCallback(
+    async (email: string, password: string) => {
+      setError(null)
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ email: email.trim(), password }),
+      })
+
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        const msg = data?.error || "Invalid email or password."
+        setError(msg)
+        throw new Error(msg)
+      }
+
+      if (data?.user) {
+        sessionTokenRef.current = data.token || ""
+        setProfile(data.user)
+        setUser(buildAuthUser(data.user, data.token || ""))
+      }
+    },
+    [buildAuthUser]
+  )
 
   const logout = useCallback(async () => {
     setError(null)
-    await signOut(getFirebaseAuth())
-    setProfile(null)
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          ...(sessionTokenRef.current ? { Authorization: `Bearer ${sessionTokenRef.current}` } : {}),
+        },
+      })
+    } catch {
+      // Invalidate client side regardless
+    } finally {
+      sessionTokenRef.current = ""
+      setUser(null)
+      setProfile(null)
+      // Redirect to login / landing page
+      window.location.href = "/"
+    }
   }, [])
 
   const value = useMemo(

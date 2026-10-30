@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import {
+  analysisFinalizeBlockers,
+  analysisStageStatus,
   continueAdvisory,
   continueRequirements,
   emptyReadiness,
@@ -13,11 +15,11 @@ import {
 } from "./studyFlow"
 
 describe("study workspace routing", () => {
-  it("opens Research Setup on the formulation tab", () => {
+  it("opens Research Setup on the phytochemicals tab", () => {
     const parsed = parseWorkspaceSlug([])
     assert.equal(parsed.step.id, "setup")
-    assert.equal(parsed.tab, "formulation")
-    assert.equal(studyPath("abc", "setup"), "/study/abc/setup/formulation")
+    assert.equal(parsed.tab, "phytochemicals")
+    assert.equal(studyPath("abc", "setup"), "/study/abc/setup/phytochemicals")
   })
 
   it("keeps docking as a single workspace without a tab segment", () => {
@@ -34,13 +36,17 @@ describe("study workspace routing", () => {
     )
     const parsed = parseWorkspaceSlug(["setup", "references"])
     assert.equal(parsed.step.id, "setup")
-    assert.equal(parsed.tab, "formulation")
+    assert.equal(parsed.tab, "phytochemicals")
+    assert.equal(
+      WORKFLOW_STEPS[0].tabs.some((tab) => tab.id === "formulation"),
+      false
+    )
   })
 
   it("falls back when a tab id is unknown", () => {
     const parsed = parseWorkspaceSlug(["predictions", "not-a-tab"])
     assert.equal(parsed.step.id, "predictions")
-    assert.equal(parsed.tab, "dpph")
+    assert.equal(parsed.tab, "all")
   })
 
   it("exposes the six locked workflow steps", () => {
@@ -61,49 +67,82 @@ describe("study workspace routing", () => {
 describe("guided continue requirements", () => {
   it("names each missing setup record", () => {
     assert.deepEqual(continueRequirements("setup", emptyReadiness()), [
-      "Add a formulation before continuing to In-Silico Screening.",
-      "Add a phytochemical before continuing to In-Silico Screening.",
-      "Add a target protein before continuing to In-Silico Screening.",
-      "Add a cell line before continuing to In-Silico Screening.",
+      "Select at least one phytochemical before continuing to In-Silico Screening.",
+      "Select at least one target protein before continuing to In-Silico Screening.",
+      "Select at least one cell line before continuing to In-Silico Screening.",
     ])
   })
 
-  it("requires a phytochemical before molecular docking", () => {
-    const messages = continueRequirements(
-      "insilico",
-      emptyReadiness({ proteins: 1 })
+  it("requires each selected phytochemical to be reviewed before docking", () => {
+    assert.deepEqual(continueRequirements("insilico", emptyReadiness({ proteins: 1 })), [
+      "Select at least one phytochemical before continuing to Molecular Docking.",
+    ])
+    assert.deepEqual(
+      continueRequirements("insilico", emptyReadiness({ compounds: 2, screenedCompounds: 1, proteins: 1 })),
+      ["Complete PubChem, drug-likeness, and ADME screening for each selected phytochemical before continuing to Molecular Docking."],
     )
-    assert.deepEqual(messages, [
-      "Select a phytochemical before continuing to Molecular Docking.",
+    assert.deepEqual(
+      continueRequirements("insilico", emptyReadiness({ compounds: 2, screenedCompounds: 2, proteins: 1 })),
+      [],
+    )
+  })
+
+  it("requires an imported result for every docking pair", () => {
+    assert.deepEqual(continueRequirements("docking", emptyReadiness({ compounds: 2, proteins: 2 })), [
+      "Resolve each docking pair before continuing to Biological Predictions. Complete AutoDock Vina, or skip a pair that has no docking profile.",
     ])
+    assert.deepEqual(
+      continueRequirements("docking", emptyReadiness({ compounds: 2, proteins: 2, dockingCompleted: 4 })),
+      [],
+    )
+    assert.deepEqual(
+      continueRequirements("docking", emptyReadiness({
+        compounds: 1,
+        proteins: 2,
+        dockingCompleted: 1,
+        dockingSkipped: 1,
+        dockingResolved: 2,
+      })),
+      [],
+    )
+    assert.equal(continueAdvisory("docking", emptyReadiness({ compounds: 1, proteins: 1 })), null)
   })
 
-  it("allows predictions without a recorded docking run and says so", () => {
-    const readiness = emptyReadiness({ compounds: 1, proteins: 1 })
-    assert.deepEqual(continueRequirements("docking", readiness), [])
-    assert.match(continueAdvisory("docking", readiness) || "", /No docking run is recorded yet/)
-  })
-
-  it("does not block laboratory entry when predictions are empty", () => {
+  it("does not require fabricated predictions before laboratory validation", () => {
     assert.deepEqual(continueRequirements("predictions", emptyReadiness()), [])
+    assert.deepEqual(
+      continueRequirements("predictions", emptyReadiness({ predictionRequired: 2, predictionRecorded: 0 })),
+      [],
+    )
     assert.equal(continueAdvisory("analysis", emptyReadiness()), null)
+    assert.deepEqual(continueRequirements("laboratory", emptyReadiness()), [])
+    assert.deepEqual(
+      continueRequirements("laboratory", emptyReadiness({ labRequired: 6, labRecorded: 2 })),
+      [],
+    )
+    assert.deepEqual(
+      continueRequirements("laboratory", emptyReadiness({ labRequired: 0, labRecorded: 0 })),
+      [],
+    )
   })
 })
 
 describe("record-backed step status", () => {
   const setupRecords = emptyReadiness({
-    formulations: 1,
     compounds: 1,
     proteins: 1,
     cellLines: 1,
   })
 
-  it("locks later steps until all four setup categories have a record", () => {
+  it("locks later steps until phytochemicals, proteins, and cell lines are selected", () => {
     assert.equal(stepAvailability("insilico", emptyReadiness(), false), "locked")
     assert.equal(stepAvailability("docking", emptyReadiness(), false), "locked")
     assert.equal(stepAvailability("setup", emptyReadiness(), true), "current")
+    assert.equal(
+      stepAvailability("insilico", emptyReadiness({ formulations: 1 }), false),
+      "locked"
+    )
     const done = emptyReadiness({
-      formulations: 1,
       compounds: 1,
       proteins: 1,
       cellLines: 1,
@@ -111,6 +150,33 @@ describe("record-backed step status", () => {
     assert.equal(stepAvailability("setup", done, false), "completed")
     assert.equal(stepAvailability("insilico", done, false), "available")
     assert.equal(stepAvailability("insilico", done, true), "current")
+    assert.equal(stepAvailability("predictions", done, false), "locked")
+  })
+
+  it("keeps biological predictions locked until every docking pair is complete", () => {
+    const partial = emptyReadiness({ compounds: 2, proteins: 2, cellLines: 1, dockingCompleted: 2 })
+    const finished = emptyReadiness({ compounds: 2, proteins: 2, cellLines: 1, dockingCompleted: 4 })
+    const skipped = emptyReadiness({
+      compounds: 1,
+      proteins: 2,
+      cellLines: 1,
+      screenedCompounds: 1,
+      dockingCompleted: 1,
+      dockingSkipped: 1,
+      dockingResolved: 2,
+    })
+    assert.equal(stepAvailability("predictions", partial, false), "locked")
+    assert.equal(stepAvailability("laboratory", partial, false), "locked")
+    assert.equal(stepAvailability("analysis", partial, false), "locked")
+    assert.equal(stepAvailability("predictions", finished, false), "available")
+    assert.equal(stepAvailability("laboratory", finished, false), "locked")
+    assert.equal(stepAvailability("analysis", finished, false), "locked")
+    assert.equal(stepRecordStatus("docking", finished), "complete")
+    assert.equal(stepRecordStatus("docking", skipped), "complete")
+    assert.equal(stepAvailability("docking", skipped, false), "completed")
+    assert.equal(stepAvailability("predictions", skipped, false), "available")
+    assert.equal(stepAvailability("laboratory", skipped, false), "locked")
+    assert.equal(stepAvailability("analysis", skipped, false), "locked")
   })
 
   it("leaves status unknown until records are loaded", () => {
@@ -118,28 +184,51 @@ describe("record-backed step status", () => {
     assert.equal(stepRecordStatus("docking", null), "unknown")
   })
 
-  it("completes setup only when formulation, compound, protein, and cell line exist", () => {
+  it("completes setup only when a phytochemical, protein, and cell line are selected", () => {
     assert.equal(stepRecordStatus("setup", setupRecords), "complete")
     assert.equal(stepRecordStatus("setup", emptyReadiness()), "incomplete")
   })
 
-  it("does not treat a catalog compound as a completed in-silico screen", () => {
+  it("completes in-silico screening only after every selected phytochemical is reviewed", () => {
     assert.equal(stepRecordStatus("insilico", setupRecords), "incomplete")
+    assert.equal(stepRecordStatus("insilico", emptyReadiness({ admetRuns: 1 })), "incomplete")
     assert.equal(
-      stepRecordStatus("insilico", emptyReadiness({ admetRuns: 1 })),
-      "complete"
+      stepRecordStatus("insilico", emptyReadiness({ compounds: 2, screenedCompounds: 2 })),
+      "complete",
     )
   })
 
-  it("completes docking, predictions, and laboratory only from their records", () => {
+  it("completes docking only when every ligand–protein pair has an imported result", () => {
     assert.equal(stepRecordStatus("docking", setupRecords), "incomplete")
-    assert.equal(stepRecordStatus("docking", emptyReadiness({ dockingRuns: 2 })), "complete")
-    assert.equal(stepRecordStatus("predictions", emptyReadiness()), "incomplete")
+    assert.equal(stepRecordStatus("docking", emptyReadiness({ dockingRuns: 2 })), "incomplete")
     assert.equal(
-      stepRecordStatus("predictions", emptyReadiness({ predictionRuns: 1 })),
-      "complete"
+      stepRecordStatus("docking", emptyReadiness({ compounds: 2, proteins: 2, dockingCompleted: 3 })),
+      "incomplete",
     )
-    assert.equal(stepRecordStatus("laboratory", emptyReadiness({ labDpph: 1 })), "complete")
+    assert.equal(
+      stepRecordStatus("docking", emptyReadiness({ compounds: 2, proteins: 2, dockingCompleted: 4 })),
+      "complete",
+    )
+    assert.equal(stepRecordStatus("predictions", emptyReadiness()), "incomplete")
+    assert.equal(stepRecordStatus("predictions", emptyReadiness({ predictionRuns: 1 })), "incomplete")
+    assert.equal(
+      stepRecordStatus("predictions", emptyReadiness({ predictionRequired: 2, predictionRecorded: 2 })),
+      "complete",
+    )
+    assert.equal(stepRecordStatus("laboratory", emptyReadiness({ labDpph: 1 })), "in_progress")
+    assert.equal(
+      stepRecordStatus("laboratory", emptyReadiness({ labRequired: 6, labRecorded: 2, labDpph: 1, labLdh: 1 })),
+      "in_progress",
+    )
+    assert.equal(stepRecordStatus("laboratory", emptyReadiness({ labRequired: 6, labRecorded: 0 })), "incomplete")
+    assert.equal(
+      stepRecordStatus("laboratory", emptyReadiness({ labRequired: 1, labRecorded: 1 })),
+      "complete",
+    )
+    assert.equal(
+      stepRecordStatus("laboratory", emptyReadiness({ labRequired: 0, labRecorded: 0 })),
+      "complete",
+    )
   })
 
   it("marks analysis review-required when a stored freshness check is STALE", () => {
@@ -160,9 +249,88 @@ describe("record-backed step status", () => {
     )
     assert.equal(
       stepRecordStatus("analysis", emptyReadiness({ statistics: 1 })),
+      "incomplete"
+    )
+    assert.equal(
+      stepRecordStatus(
+        "analysis",
+        emptyReadiness({ statistics: 1, staleStatistics: 1, interpretationFinal: 1 }),
+      ),
       "complete"
     )
+    assert.equal(
+      stepRecordStatus("analysis", emptyReadiness({ interpretationFinal: 1 })),
+      "complete"
+    )
+    assert.equal(
+      stepRecordStatus(
+        "analysis",
+        emptyReadiness({ interpretationFinal: 1, laboratoryChangedAfterAnalysis: true }),
+      ),
+      "review",
+    )
+    assert.equal(
+      stepAvailability(
+        "analysis",
+        emptyReadiness({ compounds: 1, proteins: 1, cellLines: 1, labRequired: 6, labRecorded: 2, labDpph: 1 }),
+        false,
+      ),
+      "locked",
+    )
     assert.equal(stepRecordStatus("docking", emptyReadiness({ staleStatistics: 1 })), "incomplete")
+  })
+
+  it("opens Analysis on the overview", () => {
+    assert.equal(studyPath("abc", "analysis"), "/study/abc/analysis/overview")
+    assert.equal(parseWorkspaceSlug(["analysis"]).tab, "overview")
+  })
+
+  it("derives analysis stage status from stored records", () => {
+    assert.equal(analysisStageStatus("statistics", emptyReadiness()), "not_started")
+    assert.equal(analysisStageStatus("statistics", emptyReadiness({ labDpph: 1 })), "ready")
+    assert.equal(analysisStageStatus("statistics", emptyReadiness({ statistics: 1 })), "completed")
+    assert.equal(
+      analysisStageStatus("statistics", emptyReadiness({ statistics: 1, staleStatistics: 1 })),
+      "in_progress",
+    )
+    assert.equal(analysisStageStatus("comparison", emptyReadiness({ predictionMtt: 1 })), "not_started")
+    assert.equal(
+      analysisStageStatus("comparison", emptyReadiness({ predictionDpph: 1, labDpph: 1 })),
+      "ready",
+    )
+    assert.equal(analysisStageStatus("comparison", emptyReadiness({ comparisons: 1 })), "completed")
+    assert.equal(analysisStageStatus("interpretation", emptyReadiness()), "not_started")
+    assert.equal(analysisStageStatus("interpretation", emptyReadiness({ statistics: 1 })), "ready")
+    assert.equal(
+      analysisStageStatus("interpretation", emptyReadiness({ interpretations: 1 })),
+      "in_progress",
+    )
+    assert.equal(
+      analysisStageStatus("interpretation", emptyReadiness({ interpretationFinal: 1 })),
+      "completed",
+    )
+  })
+
+  it("blocks finalizing until statistics, compatible comparisons, and the written interpretation exist", () => {
+    const blocked = analysisFinalizeBlockers(
+      emptyReadiness({ labDpph: 1, predictionDpph: 1, labLdh: 0 }),
+    )
+    assert.ok(blocked.some((line) => /statistical analysis/i.test(line)))
+    assert.ok(blocked.some((line) => /DPPH/i.test(line)))
+    assert.ok(blocked.some((line) => /interpretation/i.test(line)))
+    assert.equal(
+      analysisFinalizeBlockers(
+        emptyReadiness({
+          labDpph: 1,
+          predictionDpph: 1,
+          statistics: 1,
+          comparisons: 1,
+          comparisonsDpph: 1,
+          interpretationReady: 1,
+        }),
+      ).length,
+      0,
+    )
   })
 
   it("reads the open step from the study path", () => {
@@ -170,5 +338,6 @@ describe("record-backed step status", () => {
     assert.equal(stepIdFromPathname("/study/abc/predictions/ldh", "abc"), "predictions")
     assert.equal(stepIdFromPathname("/", "abc"), null)
     assert.equal(stepIdFromPathname("/study/other/setup/formulation", "abc"), null)
+    assert.equal(stepIdFromPathname("/study/abc/assistant", "abc"), null)
   })
 })
