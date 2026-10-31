@@ -1,0 +1,19 @@
+# NANOTOPHEA Pinned Scientific Requirements
+# Validated for Python 3.11.x (Windows x64)
+
+# 1. Molecular Informatics, Preparation & Docking
+rdkit==2026.3.6
+meeko==0.8.0
+gemmi==0.7.5
+openbabel-wheel==3.1.1.23
+scipy==1.17.1
+numpy==2.4.6
+
+# 2. Local ADME Prediction Service
+fastapi==0.142.4
+uvicorn==0.54.0
+pydantic==2.13.5
+torch==2.14.1
+chemprop==2.3.1
+admet-ai==2.0.1
+

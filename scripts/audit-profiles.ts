@@ -1,6 +1,8 @@
-process.chdir('c:/projects/nanotophea');
-process.env.VINA_BIN = 'C:/projects/nanotophea/tools/vina/vina.exe';
-process.env.DOCKING_PYTHON = 'C:/projects/nanotophea/.docking-venv/Scripts/python.exe';
+import path from "node:path";
+const root = path.resolve(__dirname, "..");
+process.chdir(root);
+process.env.VINA_BIN = process.env.VINA_BIN || path.join(root, "tools", "vina", "vina.exe");
+process.env.DOCKING_PYTHON = process.env.DOCKING_PYTHON || path.join(root, ".adme-venv", "Scripts", "python.exe");
 
 import { resolveDockingProfile } from '../services/docking/resolveProfile';
 import { executeVina } from '../services/docking/vina';

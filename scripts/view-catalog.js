@@ -1,5 +1,6 @@
-﻿const fs = require('fs');
-const txt = fs.readFileSync('c:/projects/nanotophea/lib/catalog/reusableResearchCatalog.ts', 'utf8');
+const fs = require('fs');
+const path = require('path');
+const txt = fs.readFileSync(path.resolve(__dirname, '../lib/catalog/reusableResearchCatalog.ts'), 'utf8');
 const lines = txt.split('\n');
 const latsIdx = lines.findIndex(l => l.includes('key: "lats1"'));
 console.log('--- LATS1 ---');

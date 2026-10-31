@@ -28,35 +28,57 @@ export function describeEngine(found: {
   }
 }
 
+export function getProjectRoot(): string {
+  return process.cwd()
+}
+
+export function getDockingPython(): string | null {
+  const configured = process.env.DOCKING_PYTHON?.trim() || process.env.ADME_PYTHON?.trim()
+  if (configured && existsSync(configured)) return configured
+
+  const root = getProjectRoot()
+  const admePy = join(root, ".adme-venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python")
+  if (existsSync(admePy)) return admePy
+
+  const dockPy = join(root, ".docking-venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python")
+  if (existsSync(dockPy)) return dockPy
+
+  return which("py") || which("python") || which("python3") || null
+}
+
+export function getVinaBinary(): string | null {
+  const configured = process.env.VINA_BIN?.trim()
+  if (configured && existsSync(configured)) return configured
+
+  const root = getProjectRoot()
+  const localVina = join(root, "tools", "vina", process.platform === "win32" ? "vina.exe" : "vina")
+  if (existsSync(localVina)) return localVina
+
+  return which("vina") || which("vina.exe") || null
+}
+
 export function inspectEngine(): EngineStatus {
+  const root = getProjectRoot()
   return describeEngine({
-    vina:
-      existing(process.env.VINA_BIN) ||
-      existing("C:/projects/nanotophea/tools/vina/vina.exe") ||
-      which("vina") ||
-      which("vina.exe"),
+    vina: getVinaBinary(),
     preparer:
       besidePython("mk_prepare_ligand.exe") ||
       besidePython("mk_prepare_ligand.py") ||
-      existing("C:/projects/nanotophea/.docking-venv/Scripts/mk_prepare_ligand.exe") ||
-      which("mk_prepare_ligand.py") ||
-      which("mk_prepare_ligand.exe") ||
       besidePython("obabel.exe") ||
-      which("obabel") ||
-      which("obabel.exe"),
-    python: Boolean(
-      existing(process.env.DOCKING_PYTHON) ||
-      existing("C:/projects/nanotophea/.docking-venv/Scripts/python.exe") ||
-      which("py") ||
-      which("python") ||
-      which("python3")
-    ),
+      existing(join(root, ".adme-venv", "Scripts", "mk_prepare_ligand.exe")) ||
+      existing(join(root, ".adme-venv", "Scripts", "obabel.exe")) ||
+      existing(join(root, ".docking-venv", "Scripts", "mk_prepare_ligand.exe")) ||
+      which("mk_prepare_ligand.exe") ||
+      which("mk_prepare_ligand.py") ||
+      which("obabel.exe") ||
+      which("obabel"),
+    python: Boolean(getDockingPython()),
   })
 }
 
 export function dockingProcessEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env }
-  const python = process.env.DOCKING_PYTHON?.trim()
+  const python = getDockingPython()
   if (python) {
     const scripts = dirname(python)
     env.PATH = `${scripts}${delimiter}${env.PATH ?? ""}`
@@ -65,7 +87,7 @@ export function dockingProcessEnv(): NodeJS.ProcessEnv {
 }
 
 function besidePython(name: string): string | null {
-  const python = process.env.DOCKING_PYTHON?.trim()
+  const python = getDockingPython()
   if (!python) return null
   return existing(join(dirname(python), name))
 }
@@ -78,7 +100,7 @@ function existing(path: string | null | undefined): string | null {
 
 function which(command: string): string | null {
   const finder = process.platform === "win32" ? "where.exe" : "which"
-  const result = spawnSync(finder, [command], { encoding: "utf8", windowsHide: true, env: dockingProcessEnv() })
+  const result = spawnSync(finder, [command], { encoding: "utf8", windowsHide: true, env: process.env })
   if (result.status !== 0) return null
   const line = result.stdout.split(/\r?\n/).map((row) => row.trim()).find((row) => existsSync(row))
   return line || null

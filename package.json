@@ -4,8 +4,9 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "next dev --port 3000",
-    "tunnel": "node scripts/tunnel.mjs",
     "dev:share": "node scripts/dev-share.mjs",
+    "setup": "node scripts/setup.mjs",
+    "setup:adme": "node scripts/setup-adme.mjs",
     "build": "next build",
     "start": "next start --port 3000",
     "lint": "next lint",
@@ -14,6 +15,7 @@
     "db:migrate": "npx tsx scripts/migrate.ts",
     "db:status": "npx tsx scripts/migrate.ts --status",
     "docking:verify": "npx tsx scripts/verify-docking-worker.ts",
+    "adme:verify": "node scripts/verify-adme.mjs",
     "studies:delete": "npx tsx scripts/delete-studies.ts",
     "records:delete": "npx tsx scripts/delete-all-records.ts"
   },

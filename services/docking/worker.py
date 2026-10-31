@@ -44,15 +44,30 @@ def command_detail(result: subprocess.CompletedProcess[str]) -> str:
     return ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
 
 
+def get_project_root() -> Path:
+    return Path(__file__).resolve().parent.parent.parent
+
+
 def tool(*names: str) -> str | None:
+    # 1. Beside sys.executable
     scripts = Path(sys.executable).resolve().parent
+    for name in names:
+        candidate = scripts / name
+        if candidate.exists():
+            return str(candidate)
+    # 2. In project .adme-venv/Scripts or .docking-venv/Scripts
+    root = get_project_root()
+    for venv_name in (".adme-venv", ".docking-venv"):
+        candidate_dir = root / venv_name / ("Scripts" if sys.platform == "win32" else "bin")
+        for name in names:
+            candidate = candidate_dir / name
+            if candidate.exists():
+                return str(candidate)
+    # 3. In system PATH
     for name in names:
         found = shutil.which(name)
         if found:
             return found
-        candidate = scripts / name
-        if candidate.exists():
-            return str(candidate)
     return None
 
 
@@ -94,6 +109,16 @@ def prepare_receptor(work: Path, timeout: int) -> str:
     return tool_name
 
 
+def get_vina_path() -> str | None:
+    vina = os.environ.get("VINA_BIN")
+    if vina and Path(vina).exists():
+        return vina
+    project_vina = get_project_root() / "tools" / "vina" / ("vina.exe" if sys.platform == "win32" else "vina")
+    if project_vina.exists():
+        return str(project_vina)
+    return which("vina") or which("vina.exe")
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         fail("Vina execution failure")
@@ -103,9 +128,7 @@ def main() -> None:
         fail("Vina execution failure")
     job = json.loads(job_path.read_text(encoding="utf-8"))
     timeout = int(job.get("timeoutSeconds") or 900)
-    vina = os.environ.get("VINA_BIN") or which("vina") or which("vina.exe")
-    if not vina and Path("C:/projects/nanotophea/tools/vina/vina.exe").exists():
-        vina = "C:/projects/nanotophea/tools/vina/vina.exe"
+    vina = get_vina_path()
     if not vina:
         fail("Docking engine unavailable")
 

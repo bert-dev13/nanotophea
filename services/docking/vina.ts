@@ -7,7 +7,7 @@ import type { ApprovedDockingConfiguration } from "@/lib/domain/models"
 import { fetchLigandStructure, StructureError } from "@/services/docking/ligand-preparation"
 import { fetchReceptorStructure, receptorChainPdb, type ReceptorRestore } from "@/services/docking/receptor-preparation"
 import { parseVinaOutput } from "@/services/docking/parser"
-import { dockingProcessEnv } from "@/services/docking/engine"
+import { dockingProcessEnv, getDockingPython } from "@/services/docking/engine"
 import { type DockingStage } from "@/services/docking/types"
 
 export interface VinaExecution {
@@ -126,11 +126,8 @@ function watchStage(work: string, onStage?: (stage: DockingStage) => Promise<voi
 }
 
 function pythonInvocation(worker: string, workdir: string): { command: string; args: string[] } {
-  const configured = process.env.DOCKING_PYTHON?.trim()
-  if (configured && existsSync(configured)) return { command: configured, args: [worker, workdir] }
-  if (existsSync("C:/projects/nanotophea/.docking-venv/Scripts/python.exe")) {
-    return { command: "C:/projects/nanotophea/.docking-venv/Scripts/python.exe", args: [worker, workdir] }
-  }
+  const python = getDockingPython()
+  if (python) return { command: python, args: [worker, workdir] }
   return { command: "py", args: ["-3", worker, workdir] }
 }
 

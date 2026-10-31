@@ -1,7 +1,7 @@
 import fs from "fs"
 import path from "path"
 import { spawnSync } from "child_process"
-import { inspectEngine } from "../services/docking/engine"
+import { inspectEngine, getDockingPython, getVinaBinary } from "../services/docking/engine"
 
 // 1. Load env vars
 function loadEnv() {
@@ -38,9 +38,9 @@ async function main() {
   let allOk = true
 
   // 1. AutoDock Vina Binary Check
-  const vinaBin = process.env.VINA_BIN || path.resolve(process.cwd(), "tools/vina/vina.exe")
-  if (!fs.existsSync(vinaBin)) {
-    console.error(`[FAIL] AutoDock Vina binary not found at: ${vinaBin}`)
+  const vinaBin = getVinaBinary()
+  if (!vinaBin || !fs.existsSync(vinaBin)) {
+    console.error(`[FAIL] AutoDock Vina binary not found (expected at tools/vina/vina.exe or VINA_BIN)`)
     allOk = false
   } else {
     const vRes = spawnSync(vinaBin, ["--version"], { encoding: "utf-8" })
@@ -53,10 +53,10 @@ async function main() {
     }
   }
 
-  // 2. Python Runtime Check
-  const pythonBin = process.env.DOCKING_PYTHON || path.resolve(process.cwd(), ".docking-venv/Scripts/python.exe")
-  if (!fs.existsSync(pythonBin)) {
-    console.error(`[FAIL] Docking Python not found at: ${pythonBin}`)
+  // 2. Python Runtime Check (.adme-venv preferred)
+  const pythonBin = getDockingPython()
+  if (!pythonBin || !fs.existsSync(pythonBin)) {
+    console.error(`[FAIL] Docking Python not found (expected at .adme-venv/Scripts/python.exe)`)
     allOk = false
   } else {
     const pyVerRes = spawnSync(pythonBin, ["--version"], { encoding: "utf-8" })
