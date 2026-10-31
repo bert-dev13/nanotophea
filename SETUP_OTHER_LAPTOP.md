@@ -26,10 +26,10 @@ This guide describes how to synchronize and run **NANOTOPHEA** across multiple w
    ```cmd
    .\setup.bat
    ```
-   *The setup script automatically verifies Node.js, installs any new npm dependencies, connects to MySQL, detects and executes pending migrations, verifies the Python 3.11 docking worker and AutoDock Vina, and secures `.env.local`.*
-3. Start the application:
+   *The setup script automatically verifies Node.js, installs any new npm dependencies, connects to MySQL, detects and executes pending migrations, verifies the Python 3.11 scientific environment (`.adme-venv`), downloads/verifies AutoDock Vina v1.2.7 with SHA-256 validation, and executes real end-to-end scientific docking and ADME tests.*
+3. Start the application with local ADME & Docking:
    ```bash
-   npm run dev
+   npm run dev:share
    ```
 
 ---
@@ -39,13 +39,13 @@ This guide describes how to synchronize and run **NANOTOPHEA** across multiple w
 The Windows setup script executes 7 sequential phases:
 
 ```
-[1/7] Environment Check      -> Node.js (>= 18) and npm
-[2/7] Dependencies Check     -> node_modules up to date (runs npm install if needed)
-[3/7] Database Connection    -> Checks MySQL port 3306 (starts XAMPP if stopped) & ensures nanotophea_db
-[4/7] Database Migrations    -> Runs npm run db:migrate (executes ONLY pending migrations in order)
-[5/7] Python Docking Stack   -> AutoDock Vina v1.2.7, Python 3.11, RDKit, Meeko, Gemmi, OpenBabel, SciPy
-[6/7] Configuration Check    -> Ensures .env.local exists with machine-specific paths (never overwrites secrets)
-[7/7] Final Verification     -> Runs npm run docking:verify to test the complete docking worker pipeline
+[1/7] Node.js & npm Runtime   -> Node.js (>= 18) and npm verification
+[2/7] Environment Config      -> Creates safe .env.local template and .docking-artifacts/ (preserves existing secrets)
+[3/7] Node Dependencies       -> Checks node_modules (runs npm install if needed)
+[4/7] Database & Migrations   -> Checks MySQL port 3306 (starts XAMPP if stopped), ensures nanotophea_db, runs db:migrate
+[5/7] Python Scientific Stack -> Python 3.11 detection, creates/verifies .adme-venv with RDKit, Meeko, Gemmi, OpenBabel, SciPy, ADMET-AI, PyTorch, Chemprop
+[6/7] AutoDock Vina           -> Verifies tools/vina/vina.exe (v1.2.7). If missing, automatically downloads from official GitHub release with SHA-256 verification
+[7/7] Scientific Verification -> Runs real Vina molecular docking test and real ADMET-AI prediction test
 ```
 
 The script is safe to rerun at any time. It skips components that are already configured and preserves all existing research records.
@@ -78,66 +78,39 @@ CREATE TABLE schema_migrations (
   ```
 
 ### Current Core Migrations
-- `001_initial_core_schema.ts` — Creates the 20 relational tables (`users`, `sessions`, `studies`, `study_members`, `formulations`, `phytochemicals`, `target_proteins`, `cell_lines`, `admet_runs`, `docking_pairs`, `docking_runs`, `docking_jobs`, `biological_predictions`, `laboratory_datasets`, `laboratory_replicates`, `statistics_analyses`, `comparisons`, `interpretations`, `references`, `audit_logs`, `literature_cache`).
+- `001_initial_core_schema.ts` — Creates the core relational tables (`users`, `sessions`, `studies`, `study_members`, `formulations`, `phytochemicals`, `target_proteins`, `cell_lines`, `admet_runs`, `docking_pairs`, `docking_runs`, `docking_jobs`, `biological_predictions`, `laboratory_datasets`, `laboratory_replicates`, `statistics_analyses`, `comparisons`, `interpretations`, `references`, `audit_logs`, `literature_cache`).
 - `002_performance_indexes.ts` — Applies high-frequency query indexes for fast study loading and docking outcome retrieval.
 - `003_global_phytochemicals.ts` — Initializes the `global_phytochemicals` library and seeds standard catalog phytochemicals if empty.
 
-### How to Create a New Migration
-When you need to alter a table, add a column, or create an index:
-1. Create a new file in `migrations/` following the naming format `00X_short_description.ts`.
-2. Use helper methods from `lib/db/migration-helpers.ts` for safe, idempotent schema updates:
-   ```ts
-   import { addColumnIfNotExists, addIndexIfNotExists, type DbExecutor, type Migration } from "../lib/db/migration-helpers"
-
-   export const migration: Migration = {
-     id: "004_add_docking_resolution_meta",
-     name: "Add resolution metadata to target proteins",
-     async up(conn: DbExecutor) {
-       await addColumnIfNotExists(
-         conn,
-         "target_proteins",
-         "experimental_method_detail",
-         "VARCHAR(255) NULL AFTER expected_method"
-       )
-     },
-   }
-
-   export default migration
-   ```
-3. Test locally with `npm run db:status` and `npm run db:migrate`.
-4. Commit and push the migration file to GitHub. Other laptops will apply it automatically during their next `setup.bat`.
-
 ---
 
-## 4. Molecular Docking Toolchain
+## 4. Scientific Engine & Toolchain Resolution
 
-NANOTOPHEA executes server-side AutoDock Vina jobs using a dedicated local worker environment:
+NANOTOPHEA resolves all scientific tools relative to the project root:
 
-- **AutoDock Vina:** Stored at `tools/vina/vina.exe` (v1.2.7). If missing, `setup.bat` automatically downloads the official release binary.
-- **Python Runtime:** Python 3.11 is strongly preferred (detected using `py -0p`).
-- **Virtual Environment:** Configured at `.docking-venv` with:
-  - `rdkit`
-  - `meeko` (includes `mk_prepare_ligand` and `mk_prepare_receptor`)
-  - `gemmi`
-  - `openbabel-wheel` (`obabel`)
-  - `scipy`
-  - `numpy`
-- **Worker Script:** `services/docking/worker.py`
-- **Docking Artifacts:** Stored at `.docking-artifacts`
+- **Python Runtime:** `<project>\.adme-venv\Scripts\python.exe`
+- **AutoDock Vina:** `<project>\tools\vina\vina.exe` (v1.2.7)
+- **Open Babel:** `<project>\.adme-venv\Scripts\obabel.exe`
+- **Docking Artifacts:** `<project>\.docking-artifacts`
 
-### Verifying the Docking Worker
-To manually test the complete docking worker pipeline at any time:
+All tools are detected automatically without requiring manual Python environment activation (`Activate.ps1`) or VS Code interpreter selection.
+
+### Starting Development (`npm run dev:share`)
+NANOTOPHEA runs completely locally without external ngrok tunnels:
 ```bash
-npm run docking:verify
+npm run dev:share
 ```
+This single command displays a health check diagnostic banner and starts both:
+- Next.js Web Application on `http://localhost:3000`
+- Local ADME Microservice on `http://127.0.0.1:8000`
 
 ---
 
 ## 5. Security and Environment Variables
 
 - `.env.local` is strictly ignored by Git and will never be committed.
-- Sensitive credentials (`TOGETHER_API_KEY`, database passwords, session secrets) must remain on the local machine.
-- `setup.bat` only updates machine-specific file paths (`VINA_BIN`, `DOCKING_PYTHON`, `DOCKING_ARTIFACT_DIR`) and will never overwrite existing secrets.
+- Sensitive credentials (`TOGETHER_API_KEY`, database passwords, session secrets) remain strictly local.
+- `setup.bat` creates a safe default `.env.local` if missing and never overwrites existing secrets.
 
 ---
 
@@ -152,19 +125,11 @@ On a completely new laptop:
    git clone <repo-url> nanotophea
    cd nanotophea
    ```
-5. Run the setup script:
+5. Run the automated setup script:
    ```cmd
    .\setup.bat
    ```
-6. (Optional) If you have an exported SQL backup of research records from another laptop, import it with:
+6. Start development:
    ```bash
-   mysql -u root nanotophea_db < path_to_backup.sql
-   ```
-   Or seed the default admin account:
-   ```bash
-   npm run seed:admin
-   ```
-7. Start development:
-   ```bash
-   npm run dev
+   npm run dev:share
    ```
