@@ -35,6 +35,7 @@ export const WORKFLOW_STEPS: WorkflowStep[] = [
       { id: "phytochemicals", label: "Phytochemicals" },
       { id: "proteins", label: "Target Proteins" },
       { id: "cell-line", label: "Cell Lines" },
+      { id: "nanoparticle", label: "Nanoparticle Formulation" },
     ],
   },
   {
@@ -538,7 +539,7 @@ export function stepIdFromPathname(pathname: string, studyId: string): StepId | 
 
 /** Old module URLs preserved as bookmarks. The page redirects into the open study. */
 export const LEGACY_MODULE_TARGETS: Record<string, { step: StepId; tab?: string }> = {
-  "/research/formulation": { step: "setup", tab: "phytochemicals" },
+  "/research/formulation": { step: "setup", tab: "nanoparticle" },
   "/research/phytochemicals": { step: "setup", tab: "phytochemicals" },
   "/research/proteins": { step: "setup", tab: "proteins" },
   "/research/cell-lines": { step: "setup", tab: "cell-line" },

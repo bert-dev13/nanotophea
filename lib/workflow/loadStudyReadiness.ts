@@ -8,6 +8,7 @@ import {
   listFormulations,
   listProteins,
   listReferences,
+  getNanoparticleFormulation,
 } from "@/lib/repositories/researchDataRepository"
 import { listComparisons } from "@/lib/repositories/comparisonRepository"
 import { listInterpretations } from "@/lib/repositories/interpretationRepository"
@@ -63,6 +64,7 @@ function assayOf(row: { assay?: string; assayType?: string }): string {
 export async function loadStudyReadiness(studyId: string): Promise<StudyReadiness> {
   const [
     formulations,
+    nanoparticle,
     compounds,
     proteins,
     cellLines,
@@ -77,6 +79,7 @@ export async function loadStudyReadiness(studyId: string): Promise<StudyReadines
     study,
   ] = await Promise.all([
     listFormulations(studyId).catch(() => []),
+    getNanoparticleFormulation(studyId).catch(() => null),
     listCompounds(studyId).catch(() => []),
     listProteins(studyId).catch(() => []),
     listCellLines(studyId).catch(() => []),
@@ -149,7 +152,7 @@ export async function loadStudyReadiness(studyId: string): Promise<StudyReadines
   }
 
   return emptyReadiness({
-    formulations: formulations.length,
+    formulations: formulations.length + (nanoparticle ? 1 : 0),
     compounds: compounds.length,
     screenedCompounds: screenedCompoundIds(compounds.map((compound) => compound.id), admetRuns).length,
     proteins: proteins.length,

@@ -13,6 +13,7 @@ import {
   mapStatisticsRecord,
   mapComparison,
   mapInterpretation,
+  mapNanoparticleFormulation,
 } from "@/lib/repositories/mysqlMappers"
 import { endpointCoverageStatus, PREDICTION_LAB_ENDPOINTS } from "@/lib/lab/sections"
 import { AdmetRunSchema } from "@/lib/domain/models"
@@ -169,6 +170,7 @@ export async function loadStudyAISlice(studyId: string): Promise<StudyAISlice> {
     statRows,
     comparisonRows,
     interpRows,
+    nanoRow,
   ] = await Promise.all([
     query<any>("SELECT * FROM phytochemicals WHERE study_id = ?", [studyId]),
     query<any>("SELECT * FROM target_proteins WHERE study_id = ?", [studyId]),
@@ -180,6 +182,7 @@ export async function loadStudyAISlice(studyId: string): Promise<StudyAISlice> {
     query<any>("SELECT * FROM statistics_analyses WHERE study_id = ? LIMIT 8", [studyId]),
     query<any>("SELECT * FROM comparisons WHERE study_id = ? LIMIT 8", [studyId]),
     query<any>("SELECT * FROM interpretations WHERE study_id = ? LIMIT 4", [studyId]),
+    queryOne<any>("SELECT * FROM nanoparticle_formulations WHERE study_id = ? LIMIT 1", [studyId]).catch(() => null),
   ])
 
   const compounds = compoundRows.map(mapCompound)
@@ -192,6 +195,7 @@ export async function loadStudyAISlice(studyId: string): Promise<StudyAISlice> {
   const statistics = statRows.map(mapStatisticsRecord)
   const comparisons = comparisonRows.map(mapComparison)
   const interpretations = interpRows.map(mapInterpretation)
+  const npFormulation = nanoRow ? mapNanoparticleFormulation(nanoRow) : null
 
   const storedSections = study.laboratorySections as Partial<Record<(typeof PREDICTION_LAB_ENDPOINTS)[number] | "characterization", boolean>> | undefined
   const omissions = study.laboratoryOmissions as Parameters<typeof endpointCoverageStatus>[3]
@@ -315,6 +319,37 @@ export async function loadStudyAISlice(studyId: string): Promise<StudyAISlice> {
       if (finite(hplc.retentionTimeMin) != null) bits.push(`retention time ${hplc.retentionTimeMin} min`)
       return [bits.join(", ")]
     }),
+    nanoparticleFormulation: npFormulation
+      ? {
+          systemName: npFormulation.systemName,
+          carrierType: npFormulation.carrierType,
+          recordType: npFormulation.recordType || "research",
+          chitosanConcentrationUnit: npFormulation.chitosanConcentrationUnit,
+          chitosanMwUnit: npFormulation.chitosanMwUnit,
+          tppConcentrationUnit: npFormulation.tppConcentrationUnit,
+          instrument: npFormulation.instrument ?? undefined,
+          measurementMethod: npFormulation.measurementMethod ?? undefined,
+          experimentDate: npFormulation.experimentDate ?? undefined,
+          researcher: npFormulation.researcher ?? undefined,
+          sampleBatchId: npFormulation.sampleBatchId ?? undefined,
+          chitosanConcentration: npFormulation.chitosanConcentration ?? undefined,
+          chitosanMolecularWeight: npFormulation.chitosanMolecularWeight ?? undefined,
+          chitosanDeacetylationDegree: npFormulation.chitosanDeacetylationDegree ?? undefined,
+          chitosanSolvent: npFormulation.chitosanSolvent ?? undefined,
+          chitosanPh: npFormulation.chitosanPh ?? undefined,
+          tppConcentration: npFormulation.tppConcentration ?? undefined,
+          tppPh: npFormulation.tppPh ?? undefined,
+          chitosanTppRatio: npFormulation.chitosanTppRatio ?? undefined,
+          mixingMethod: npFormulation.mixingMethod ?? undefined,
+          particleSizeNm: npFormulation.particleSizeNm ?? undefined,
+          pdi: npFormulation.pdi ?? undefined,
+          zetaPotentialMv: npFormulation.zetaPotentialMv ?? undefined,
+          encapsulationEfficiencyPercent: npFormulation.encapsulationEfficiencyPercent ?? undefined,
+          loadingCapacityPercent: npFormulation.loadingCapacityPercent ?? undefined,
+          characterizationNotes: npFormulation.characterizationNotes ?? undefined,
+          computationalStatus: npFormulation.computationalStatus ?? "not_configured",
+        }
+      : undefined,
     interpretation: {
       overall: clip(text(latestInterpretation?.interpretationText || latestInterpretation?.body)),
       relationship: clip(text(latestInterpretation?.comparisonSummary)),
@@ -346,6 +381,9 @@ export function assembleStudyAIContext(slice: StudyAISlice, page: AiPageContext)
     `Selected phytochemicals: ${slice.compounds.length ? slice.compounds.join(", ") : "none recorded"}`,
     `Selected target proteins: ${slice.proteins.length ? slice.proteins.join(", ") : "none recorded"}`,
     `Selected cell lines: ${slice.cellLines.length ? slice.cellLines.join(", ") : "none recorded"}`,
+    slice.nanoparticleFormulation
+      ? `Nanoparticle carrier system (Chitosan–TPP Ionic Gelation): System ${slice.nanoparticleFormulation.systemName}. Record type: ${slice.nanoparticleFormulation.recordType === "test_synthetic" ? "TEST / SYNTHETIC DATA (Synthetic values for software validation; NOT part of experimental study evidence)" : "RESEARCH DATA (Study protocol & experimental measurements)"}. Chitosan conc: ${slice.nanoparticleFormulation.chitosanConcentration ? `${slice.nanoparticleFormulation.chitosanConcentration} ${slice.nanoparticleFormulation.chitosanConcentrationUnit || "mg/mL"}` : "not recorded"}, MW: ${slice.nanoparticleFormulation.chitosanMolecularWeight || "not recorded"}, DDA: ${slice.nanoparticleFormulation.chitosanDeacetylationDegree || "not recorded"}; TPP conc: ${slice.nanoparticleFormulation.tppConcentration ? `${slice.nanoparticleFormulation.tppConcentration} ${slice.nanoparticleFormulation.tppConcentrationUnit || "mg/mL"}` : "not recorded"}, pH: ${slice.nanoparticleFormulation.tppPh || "not recorded"}; Ratio: ${slice.nanoparticleFormulation.chitosanTppRatio || "not recorded"}. Characterization: Size: ${slice.nanoparticleFormulation.particleSizeNm != null ? `${slice.nanoparticleFormulation.particleSizeNm} nm` : "not recorded"}, PDI: ${slice.nanoparticleFormulation.pdi != null ? slice.nanoparticleFormulation.pdi : "not recorded"}, Zeta: ${slice.nanoparticleFormulation.zetaPotentialMv != null ? `${slice.nanoparticleFormulation.zetaPotentialMv} mV` : "not recorded"}, EE: ${slice.nanoparticleFormulation.encapsulationEfficiencyPercent != null ? `${slice.nanoparticleFormulation.encapsulationEfficiencyPercent}%` : "not recorded"}, LC: ${slice.nanoparticleFormulation.loadingCapacityPercent != null ? `${slice.nanoparticleFormulation.loadingCapacityPercent}%` : "not recorded"}. Method: ${slice.nanoparticleFormulation.measurementMethod || "not recorded"}, Instrument: ${slice.nanoparticleFormulation.instrument || "not recorded"}, Sample ID: ${slice.nanoparticleFormulation.sampleBatchId || "not recorded"}. ${slice.nanoparticleFormulation.recordType === "test_synthetic" ? "CRITICAL GUARDRAIL: The current characterization values are marked as test data and should NOT be interpreted as experimental findings or real research evidence." : ""} Computational modeling: NOT YET CONFIGURED (No computational interaction result is currently available).`
+      : "Nanoparticle carrier system (Chitosan–TPP): Not recorded in study setup.",
     `ADME assessments:`,
     `Experimental coverage: ${slice.coverage.tested} of ${slice.coverage.endpoints} endpoints`,
   ]

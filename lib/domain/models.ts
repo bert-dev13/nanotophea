@@ -233,6 +233,107 @@ export const FormulationSchema = ScientificRecordBaseSchema.extend({
 })
 export type Formulation = z.infer<typeof FormulationSchema>
 
+export const NanoparticleFormulationSchema = ScientificRecordBaseSchema.extend({
+  systemName: z.string().default("Chitosan–TPP Nanoparticle System"),
+  carrierType: z.string().default("chitosan_tpp"),
+  recordType: z.enum(["research", "test_synthetic"]).default("research"),
+  chitosanConcentrationUnit: z.string().default("mg/mL"),
+  chitosanMwUnit: z.string().default("kDa"),
+  tppConcentrationUnit: z.string().default("mg/mL"),
+
+  // Chitosan parameters
+  chitosanConcentration: z.string().nullish(),
+  chitosanMolecularWeight: z.string().nullish(),
+  chitosanDeacetylationDegree: z.string().nullish(),
+  chitosanSolvent: z.string().nullish(),
+  chitosanPh: z.string().nullish(),
+
+  // TPP parameters
+  tppConcentration: z.string().nullish(),
+  tppPh: z.string().nullish(),
+
+  // Formation / crosslinking parameters
+  chitosanTppRatio: z.string().nullish(),
+  mixingMethod: z.string().nullish(),
+  additionMethod: z.string().nullish(),
+  stirringRate: z.string().nullish(),
+  stirringDuration: z.string().nullish(),
+  temperature: z.string().nullish(),
+  preparationNotes: z.string().nullish(),
+
+  // Nanoparticle characterization (Experimental measurements)
+  particleSizeNm: z.number().nullish(),
+  pdi: z.number().nullish(),
+  zetaPotentialMv: z.number().nullish(),
+  encapsulationEfficiencyPercent: z.number().nullish(),
+  loadingCapacityPercent: z.number().nullish(),
+  instrument: z.string().nullish(),
+  measurementMethod: z.string().nullish(),
+  experimentDate: z.string().nullish(),
+  researcher: z.string().nullish(),
+  sampleBatchId: z.string().nullish(),
+  characterizationNotes: z.string().nullish(),
+
+  // Computational modeling status
+  computationalStatus: z.enum(["not_configured", "configured", "running", "completed"]).default("not_configured"),
+  computationalNotes: z.string().nullish(),
+
+  referenceIds: z.array(z.string()).default([]),
+})
+export type NanoparticleFormulation = z.infer<typeof NanoparticleFormulationSchema>
+
+export const NanoparticleFormulationInputSchema = NanoparticleFormulationSchema.omit({
+  id: true,
+  studyId: true,
+  createdAt: true,
+  updatedAt: true,
+  createdBy: true,
+  updatedBy: true,
+}).partial().extend({
+  systemName: z.string().optional(),
+})
+export type NanoparticleFormulationInput = z.infer<typeof NanoparticleFormulationInputSchema>
+export const NanoparticleInteractionInputSchema = z.object({
+  studyId: z.string().min(1),
+  chitosanProperties: z.object({
+    concentration: z.string().nullish(),
+    concentrationUnit: z.string().default("mg/mL"),
+    molecularWeight: z.string().nullish(),
+    mwUnit: z.string().default("kDa"),
+    deacetylationDegree: z.string().nullish(),
+    solvent: z.string().nullish(),
+    pH: z.string().nullish(),
+  }),
+  tppProperties: z.object({
+    concentration: z.string().nullish(),
+    concentrationUnit: z.string().default("mg/mL"),
+    pH: z.string().nullish(),
+  }),
+  formulationConditions: z.object({
+    mixingMethod: z.string().nullish(),
+    additionMethod: z.string().nullish(),
+    stirringRate: z.string().nullish(),
+    stirringDuration: z.string().nullish(),
+  }),
+  ratio: z.string().nullish(),
+  pH: z.string().nullish(),
+  temperature: z.string().nullish(),
+})
+export type NanoparticleInteractionInput = z.infer<typeof NanoparticleInteractionInputSchema>
+
+export const NanoparticleInteractionResultSchema = z.object({
+  method: z.string(),
+  model: z.string(),
+  modelVersion: z.string(),
+  inputParameters: NanoparticleInteractionInputSchema,
+  results: z.record(z.string(), z.unknown()),
+  provenance: ProvenanceSchema,
+  generatedAt: z.string(),
+  evidenceClass: EvidenceTypeSchema,
+})
+export type NanoparticleInteractionResult = z.infer<typeof NanoparticleInteractionResultSchema>
+
+
 export const CompoundSchema = ScientificRecordBaseSchema.extend({
   name: z.string().min(1),
   pubchemCid: z.number().int().optional(),

@@ -3,6 +3,7 @@ import type {
   Study,
   StudyMember,
   Formulation,
+  NanoparticleFormulation,
   Compound,
   Protein,
   CellLineRecord,
@@ -23,6 +24,7 @@ import {
   StudySchema,
   StudyMemberSchema,
   FormulationSchema,
+  NanoparticleFormulationSchema,
   CompoundSchema,
   ProteinSchema,
   CellLineSchema,
@@ -138,6 +140,59 @@ export function mapFormulation(row: any): Formulation {
     isCanonical: Boolean(row.is_canonical),
     provenance: parseJson(row.provenance, { evidenceClass: "REFERENCE" }),
     notes: row.notes ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+  })
+}
+
+export function mapNanoparticleFormulation(row: any): NanoparticleFormulation {
+  return NanoparticleFormulationSchema.parse({
+    id: row.id,
+    studyId: row.study_id,
+        systemName: row.system_name || "Chitosan–TPP Nanoparticle System",
+    carrierType: row.carrier_type || "chitosan_tpp",
+    recordType: row.record_type || "research",
+
+    chitosanConcentration: row.chitosan_concentration ?? undefined,
+    chitosanConcentrationUnit: row.chitosan_concentration_unit || "mg/mL",
+    chitosanMolecularWeight: row.chitosan_molecular_weight ?? undefined,
+    chitosanMwUnit: row.chitosan_mw_unit || "kDa",
+    chitosanDeacetylationDegree: row.chitosan_deacetylation_degree ?? undefined,
+    chitosanSolvent: row.chitosan_solvent ?? undefined,
+    chitosanPh: row.chitosan_ph ?? undefined,
+
+    tppConcentration: row.tpp_concentration ?? undefined,
+    tppConcentrationUnit: row.tpp_concentration_unit || "mg/mL",
+    tppPh: row.tpp_ph ?? undefined,
+
+    chitosanTppRatio: row.chitosan_tpp_ratio ?? undefined,
+    mixingMethod: row.mixing_method ?? undefined,
+    additionMethod: row.addition_method ?? undefined,
+    stirringRate: row.stirring_rate ?? undefined,
+    stirringDuration: row.stirring_duration ?? undefined,
+    temperature: row.temperature ?? undefined,
+    preparationNotes: row.preparation_notes ?? undefined,
+
+    particleSizeNm: row.particle_size_nm != null ? Number(row.particle_size_nm) : undefined,
+    pdi: row.pdi != null ? Number(row.pdi) : undefined,
+    zetaPotentialMv: row.zeta_potential_mv != null ? Number(row.zeta_potential_mv) : undefined,
+    encapsulationEfficiencyPercent: row.encapsulation_efficiency_percent != null ? Number(row.encapsulation_efficiency_percent) : undefined,
+    loadingCapacityPercent: row.loading_capacity_percent != null ? Number(row.loading_capacity_percent) : undefined,
+    instrument: row.instrument ?? undefined,
+    measurementMethod: row.measurement_method ?? undefined,
+    experimentDate: row.experiment_date ?? undefined,
+    researcher: row.researcher ?? undefined,
+    sampleBatchId: row.sample_batch_id ?? undefined,
+    characterizationNotes: row.characterization_notes ?? undefined,
+
+    computationalStatus: row.computational_status || "not_configured",
+    computationalNotes: row.computational_notes ?? undefined,
+
+    provenance: parseJson(row.provenance, { evidenceClass: "REFERENCE" }),
+    referenceIds: parseJson(row.reference_ids, []),
+
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     createdBy: row.created_by,

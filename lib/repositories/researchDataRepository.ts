@@ -8,11 +8,13 @@ import {
   CellLineSchema,
   CompoundSchema,
   FormulationSchema,
+  NanoparticleFormulationSchema,
   ProteinSchema,
   ReferenceRecordSchema,
   type CellLineRecord,
   type Compound,
   type Formulation,
+  type NanoparticleFormulation,
   type Protein,
   type ReferenceRecord,
 } from "@/lib/domain/models"
@@ -23,6 +25,7 @@ import {
   mapCellLine,
   mapCompound,
   mapFormulation,
+  mapNanoparticleFormulation,
   mapProtein,
   mapReference,
 } from "@/lib/repositories/mysqlMappers"
@@ -927,6 +930,232 @@ export async function deleteReference(studyId: string, id: string, actor: Actor)
     actorId: actor.id,
     action: "reference.delete",
     entityType: "reference",
+    entityId: id,
+  })
+}
+
+// ================= Nanoparticle Formulations =================
+
+export async function getNanoparticleFormulation(studyId: string): Promise<NanoparticleFormulation | null> {
+  const row = await queryOne(`SELECT * FROM nanoparticle_formulations WHERE study_id = ? ORDER BY created_at ASC LIMIT 1`, [studyId])
+  if (!row) return null
+  return mapNanoparticleFormulation(row)
+}
+
+export async function saveNanoparticleFormulation(
+  studyId: string,
+  actor: Actor,
+  data: Partial<NanoparticleFormulation>
+): Promise<NanoparticleFormulation> {
+  const existing = await queryOne<any>(`SELECT id FROM nanoparticle_formulations WHERE study_id = ? LIMIT 1`, [studyId])
+  const now = new Date().toISOString()
+
+  if (existing) {
+    const id = existing.id
+    const fields: string[] = [
+      "system_name = ?",
+      "carrier_type = ?",
+      "record_type = ?",
+      "chitosan_concentration = ?",
+      "chitosan_concentration_unit = ?",
+      "chitosan_molecular_weight = ?",
+      "chitosan_mw_unit = ?",
+      "chitosan_molecular_weight = ?",
+      "chitosan_deacetylation_degree = ?",
+      "chitosan_solvent = ?",
+      "chitosan_ph = ?",
+      "tpp_concentration = ?",
+      "tpp_concentration_unit = ?",
+      "tpp_ph = ?",
+      "chitosan_tpp_ratio = ?",
+      "mixing_method = ?",
+      "addition_method = ?",
+      "stirring_rate = ?",
+      "stirring_duration = ?",
+      "temperature = ?",
+      "preparation_notes = ?",
+      "particle_size_nm = ?",
+      "pdi = ?",
+      "zeta_potential_mv = ?",
+      "encapsulation_efficiency_percent = ?",
+      "loading_capacity_percent = ?",
+      "instrument = ?",
+      "measurement_method = ?",
+      "experiment_date = ?",
+      "researcher = ?",
+      "sample_batch_id = ?",
+      "characterization_notes = ?",
+      "computational_status = ?",
+      "computational_notes = ?",
+      "provenance = ?",
+      "reference_ids = ?",
+      "updated_at = ?",
+      "updated_by = ?",
+    ]
+    const params = [
+      data.systemName ?? "Chitosan–TPP Nanoparticle System",
+      data.carrierType ?? "chitosan_tpp",
+      data.recordType ?? "research",
+      data.chitosanConcentration ?? null,
+      data.chitosanConcentrationUnit ?? "mg/mL",
+      data.chitosanMolecularWeight ?? null,
+      data.chitosanMwUnit ?? "kDa",
+      data.chitosanDeacetylationDegree ?? null,
+      data.chitosanSolvent ?? null,
+      data.chitosanPh ?? null,
+      data.tppConcentration ?? null,
+      data.tppConcentrationUnit ?? "mg/mL",
+      data.tppPh ?? null,
+      data.chitosanTppRatio ?? null,
+      data.mixingMethod ?? null,
+      data.additionMethod ?? null,
+      data.stirringRate ?? null,
+      data.stirringDuration ?? null,
+      data.temperature ?? null,
+      data.preparationNotes ?? null,
+      data.particleSizeNm ?? null,
+      data.pdi ?? null,
+      data.zetaPotentialMv ?? null,
+      data.encapsulationEfficiencyPercent ?? null,
+      data.loadingCapacityPercent ?? null,
+      data.instrument ?? null,
+      data.measurementMethod ?? null,
+      data.experimentDate ?? null,
+      data.researcher ?? null,
+      data.sampleBatchId ?? null,
+      data.characterizationNotes ?? null,
+      data.computationalStatus ?? "not_configured",
+      data.computationalNotes ?? null,
+      toJson(data.provenance ?? defaultProvenance("REFERENCE", { source: "Study protocol" })),
+      toJson(data.referenceIds ?? []),
+      now,
+      actor.id,
+      studyId,
+      id,
+    ]
+
+    await execute(`UPDATE nanoparticle_formulations SET ${fields.join(", ")} WHERE study_id = ? AND id = ?`, params)
+    await writeAuditLog({
+      studyId,
+      actorId: actor.id,
+      action: "nanoparticle_formulation.update",
+      entityType: "nanoparticle_formulation",
+      entityId: id,
+    })
+    const updated = await getNanoparticleFormulation(studyId)
+    return updated!
+  } else {
+    const id = generateDocId()
+    const record = NanoparticleFormulationSchema.parse({
+      id,
+      studyId,
+      systemName: data.systemName ?? "Chitosan–TPP Nanoparticle System",
+      carrierType: data.carrierType ?? "chitosan_tpp",
+      chitosanConcentration: data.chitosanConcentration ?? null,
+      chitosanMolecularWeight: data.chitosanMolecularWeight ?? null,
+      chitosanDeacetylationDegree: data.chitosanDeacetylationDegree ?? null,
+      chitosanSolvent: data.chitosanSolvent ?? null,
+      chitosanPh: data.chitosanPh ?? null,
+      tppConcentration: data.tppConcentration ?? null,
+      tppPh: data.tppPh ?? null,
+      chitosanTppRatio: data.chitosanTppRatio ?? null,
+      mixingMethod: data.mixingMethod ?? null,
+      additionMethod: data.additionMethod ?? null,
+      stirringRate: data.stirringRate ?? null,
+      stirringDuration: data.stirringDuration ?? null,
+      temperature: data.temperature ?? null,
+      preparationNotes: data.preparationNotes ?? null,
+      particleSizeNm: data.particleSizeNm ?? null,
+      pdi: data.pdi ?? null,
+      zetaPotentialMv: data.zetaPotentialMv ?? null,
+      encapsulationEfficiencyPercent: data.encapsulationEfficiencyPercent ?? null,
+      loadingCapacityPercent: data.loadingCapacityPercent ?? null,
+      characterizationNotes: data.characterizationNotes ?? null,
+      computationalStatus: data.computationalStatus ?? "not_configured",
+      computationalNotes: data.computationalNotes ?? null,
+      provenance: data.provenance ?? defaultProvenance("REFERENCE", { source: "Study protocol" }),
+      referenceIds: data.referenceIds ?? [],
+      createdAt: now,
+      updatedAt: now,
+      createdBy: actor.id,
+      updatedBy: actor.id,
+    })
+
+    await execute(
+      `INSERT INTO nanoparticle_formulations (
+        id, study_id, system_name, carrier_type, record_type,
+        chitosan_concentration, chitosan_concentration_unit, chitosan_molecular_weight, chitosan_mw_unit, chitosan_deacetylation_degree, chitosan_solvent, chitosan_ph,
+        tpp_concentration, tpp_concentration_unit, tpp_ph,
+        chitosan_tpp_ratio, mixing_method, addition_method, stirring_rate, stirring_duration, temperature, preparation_notes,
+        particle_size_nm, pdi, zeta_potential_mv, encapsulation_efficiency_percent, loading_capacity_percent,
+        instrument, measurement_method, experiment_date, researcher, sample_batch_id, characterization_notes,
+        computational_status, computational_notes,
+        provenance, reference_ids, created_at, updated_at, created_by, updated_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        record.id,
+        record.studyId,
+        record.systemName,
+        record.carrierType,
+        record.recordType,
+        record.chitosanConcentration,
+        record.chitosanConcentrationUnit,
+        record.chitosanMolecularWeight,
+        record.chitosanMwUnit,
+        record.chitosanDeacetylationDegree,
+        record.chitosanSolvent,
+        record.chitosanPh,
+        record.tppConcentration,
+        record.tppConcentrationUnit,
+        record.tppPh,
+        record.chitosanTppRatio,
+        record.mixingMethod,
+        record.additionMethod,
+        record.stirringRate,
+        record.stirringDuration,
+        record.temperature,
+        record.preparationNotes,
+        record.particleSizeNm,
+        record.pdi,
+        record.zetaPotentialMv,
+        record.encapsulationEfficiencyPercent,
+        record.loadingCapacityPercent,
+        record.instrument,
+        record.measurementMethod,
+        record.experimentDate,
+        record.researcher,
+        record.sampleBatchId,
+        record.characterizationNotes,
+        record.computationalStatus,
+        record.computationalNotes,
+        toJson(record.provenance),
+        toJson(record.referenceIds),
+        record.createdAt,
+        record.updatedAt,
+        record.createdBy,
+        record.updatedBy,
+      ]
+    )
+
+    await writeAuditLog({
+      studyId,
+      actorId: actor.id,
+      action: "nanoparticle_formulation.create",
+      entityType: "nanoparticle_formulation",
+      entityId: id,
+    })
+
+    return record
+  }
+}
+
+export async function deleteNanoparticleFormulation(studyId: string, id: string, actor: Actor): Promise<void> {
+  await execute(`DELETE FROM nanoparticle_formulations WHERE study_id = ? AND id = ?`, [studyId, id])
+  await writeAuditLog({
+    studyId,
+    actorId: actor.id,
+    action: "nanoparticle_formulation.delete",
+    entityType: "nanoparticle_formulation",
     entityId: id,
   })
 }

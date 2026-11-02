@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import https from "node:https"
@@ -183,9 +183,16 @@ async function main() {
 
   if (ensureDbRes.status !== 0) {
     // If on Windows and MySQL is not running, check if XAMPP exists
-    if (isWin && existsSync("C:\\xampp\\mysql_start.bat")) {
+    const xamppBat = existsSync("C:\\xamppp\\mysql_start.bat")
+      ? "C:\\xamppp\\mysql_start.bat"
+      : existsSync("C:\\xampp\\mysql_start.bat")
+        ? "C:\\xampp\\mysql_start.bat"
+        : null
+    if (isWin && xamppBat) {
       logInfo("Starting local XAMPP MySQL service...")
-      spawnSync("cmd.exe", ["/c", "C:\\xampp\\mysql_start.bat"], { windowsHide: true })
+      spawn("cmd.exe", ["/c", xamppBat], { detached: true, stdio: "ignore", windowsHide: true }).unref()
+      // Give MySQL a few seconds to initialize
+      await new Promise((r) => setTimeout(r, 3000))
     }
     // Retry ensure-db
     const retryRes = spawnSync(npxCmd, ["tsx", "scripts/ensure-db.ts"], {

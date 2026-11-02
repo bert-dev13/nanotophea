@@ -58,6 +58,35 @@ export interface StudyAISlice {
   }>
   comparisons: Array<{ endpoint: string; mode: string; status: string; reason?: string }>
   characterization: string[]
+  nanoparticleFormulation?: {
+    systemName: string
+    carrierType: string
+    recordType: "research" | "test_synthetic"
+    chitosanConcentrationUnit?: string
+    chitosanMwUnit?: string
+    tppConcentrationUnit?: string
+    instrument?: string
+    measurementMethod?: string
+    experimentDate?: string
+    researcher?: string
+    sampleBatchId?: string
+    chitosanConcentration?: string
+    chitosanMolecularWeight?: string
+    chitosanDeacetylationDegree?: string
+    chitosanSolvent?: string
+    chitosanPh?: string
+    tppConcentration?: string
+    tppPh?: string
+    chitosanTppRatio?: string
+    mixingMethod?: string
+    particleSizeNm?: number
+    pdi?: number
+    zetaPotentialMv?: number
+    encapsulationEfficiencyPercent?: number
+    loadingCapacityPercent?: number
+    characterizationNotes?: string
+    computationalStatus?: string
+  }
   interpretation: {
     overall: string
     relationship: string

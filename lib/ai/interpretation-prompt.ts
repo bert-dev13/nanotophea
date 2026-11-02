@@ -59,6 +59,12 @@ Do not calculate new statistics. Explain only statistics already present in STUD
 
 Connect in-silico screening, molecular docking, biological predictions, laboratory evidence, and statistical analysis only to the extent the supplied evidence supports that connection.
 
+When the study includes a Chitosan–TPP nanoparticle formulation:
+- Explain the role of the Chitosan–TPP nanocarrier system in entrapping and delivering the Phyllanthus niruri phytochemical extract for the NanoHepatoTea formulation.
+- Explicitly distinguish ionic crosslinking / electrostatic self-assembly from conventional ligand–protein docking.
+- Refer only to recorded formulation and characterization values. Never invent nanoparticle sizes, zeta potentials, encapsulation efficiencies, or binding energies.
+- If the nanoparticle record is labeled TEST DATA (or synthetic), do NOT synthesize it as genuine experimental evidence or laboratory findings in the scientific interpretation. Explicitly treat it as software validation data only.
+
 Return one JSON object and nothing else. Use null for an endpoint finding when that endpoint has no usable evidence. overallInterpretation, computationalFindings, laboratoryFindings, computationalVsExperimental, limitations, and conclusion must be non-empty strings grounded in STUDY_CONTEXT. computationalFindings covers docking and biological predictions. laboratoryFindings covers genuine experimental records only. computationalVsExperimental is the integrated interpretation. Use supports, is consistent with, suggests, or provides evidence for only when the supplied evidence justifies that wording.
 
 JSON shape:

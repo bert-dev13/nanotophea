@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useStudy } from "@/components/providers/StudyProvider"
 import { listLabDatasets } from "@/lib/repositories/labRepository"
 import { listPredictionRuns } from "@/lib/repositories/scientificRunRepository"
+import { getNanoparticleFormulation } from "@/lib/repositories/researchDataRepository"
 
 const COMPUTATIONAL = [
   { id: "dpph", label: "DPPH" },
@@ -30,7 +31,8 @@ export function AnalysisEvidenceSummary() {
     void Promise.all([
       listLabDatasets(activeStudy.id),
       listPredictionRuns(activeStudy.id),
-    ]).then(([labs, predictions]) => {
+      getNanoparticleFormulation(activeStudy.id).catch(() => null),
+    ]).then(([labs, predictions, nano]) => {
       if (cancelled) return
       const assay = (row: { assay?: string; assayType?: string }) => row.assayType || row.assay || ""
       const experimentalRows: EvidenceRow[] = []
@@ -40,7 +42,15 @@ export function AnalysisEvidenceSummary() {
       if (labs.some((row) => assay(row) !== "" && !biological.has(assay(row)))) {
         experimentalRows.push({ label: "Characterization", value: "Available" })
       }
+      if (nano?.particleSizeNm != null || nano?.zetaPotentialMv != null) {
+        if (nano.recordType !== "test_synthetic") {
+          experimentalRows.push({ label: "Chitosan–TPP DLS/Zeta", value: "Available" })
+        }
+      }
       const computationalRows: EvidenceRow[] = []
+      if (nano) {
+        computationalRows.push({ label: "Nanocarrier Protocol", value: nano.systemName })
+      }
       for (const item of COMPUTATIONAL) {
         const matches = predictions.filter((run) => (run.endpoint || run.module) === item.id)
         if (matches.length === 0) continue

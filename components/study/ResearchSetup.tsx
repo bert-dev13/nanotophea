@@ -1,23 +1,27 @@
 "use client"
 
 import { useRef, type KeyboardEvent } from "react"
-import { ArrowLeft, ArrowRight, Atom, Check, FlaskConical, Microscope } from "lucide-react"
+import { ArrowLeft, ArrowRight, Atom, Check, FlaskConical, Microscope, Sparkles } from "lucide-react"
 import { AskAiLink } from "@/components/ai/ask-ai-link"
+import { useStudy } from "@/components/providers/StudyProvider"
 import { LibrarySelection, type LibraryCategory } from "@/components/study/setup/LibrarySelection"
 import { PhytochemicalBrowser } from "@/components/study/setup/PhytochemicalBrowser"
 import { ProteinBrowser } from "@/components/study/setup/ProteinBrowser"
 import { CellLineBrowser } from "@/components/study/setup/CellLineBrowser"
+import { NanoparticleFormulationWorkspace } from "@/components/study/setup/NanoparticleFormulationWorkspace"
 import type { StudyReadiness } from "@/lib/workflow/studyFlow"
 
-type CountKey = "compounds" | "proteins" | "cellLines"
+type CountKey = "compounds" | "proteins" | "cellLines" | "formulations"
+
+export type SetupSectionId = "phytochemicals" | "proteins" | "cell-line" | "nanoparticle"
 
 interface SetupSection {
-  id: LibraryCategory
+  id: SetupSectionId
   number: string
   label: string
   hint: string
   countKey: CountKey
-  icon: typeof FlaskConical
+  icon: typeof FlaskConical | typeof Atom | typeof Microscope | typeof Sparkles
 }
 
 const SECTIONS: SetupSection[] = [
@@ -45,12 +49,22 @@ const SECTIONS: SetupSection[] = [
     countKey: "cellLines",
     icon: Microscope,
   },
+  {
+    id: "nanoparticle",
+    number: "04",
+    label: "Nanoparticle Formulation",
+    hint: "Chitosan–TPP nanoparticle system",
+    countKey: "formulations",
+    icon: Sparkles,
+  },
 ]
 
-const MISSING_TAB: Record<string, LibraryCategory> = {
+const MISSING_TAB: Record<string, SetupSectionId> = {
   phytochemical: "phytochemicals",
   protein: "proteins",
   "cell line": "cell-line",
+  nanoparticle: "nanoparticle",
+  formulation: "nanoparticle",
 }
 
 export interface ResearchSetupProps {
@@ -76,6 +90,7 @@ export function ResearchSetup({
   onContinueAction,
   onChangedAction,
 }: ResearchSetupProps) {
+  const { activeStudy } = useStudy()
   const handleTab = onTabAction ?? (() => {})
   const handleContinue = onContinueAction ?? (() => {})
   const handleChanged = onChangedAction ?? (() => {})
@@ -190,7 +205,15 @@ export function ResearchSetup({
                 <span className="nano-setup-step-hint">{section.hint}</span>
               </span>
               <span className="nano-setup-step-meta">
-                {count === null ? "Checking" : done ? `${count} selected` : "0 selected"}
+                {count === null
+                  ? "Checking"
+                  : section.id === "nanoparticle"
+                    ? done
+                      ? `${count} configured`
+                      : "Not configured"
+                    : done
+                      ? `${count} selected`
+                      : "0 selected"}
               </span>
             </button>
           )
@@ -214,8 +237,28 @@ export function ResearchSetup({
           <CellLineBrowser
             onChangedAction={handleChanged}
             onBackAction={() => handleTab("proteins")}
-            onContinueAction={handleContinue}
+            onContinueAction={() => handleTab("nanoparticle")}
+            continueDisabled={false}
+          />
+        </section>
+      ) : active.id === "nanoparticle" ? (
+        <section id="setup-stage" role="tabpanel" aria-labelledby={`setup-step-${active.id}`} className="nano-setup-stage space-y-6">
+          <NanoparticleFormulationWorkspace
+            studyId={activeStudy?.id || ""}
+            onChangedAction={handleChanged}
+          />
+          <SetupActions
+            checkError={checkError}
+            readiness={readiness}
+            missing={missing}
+            previous={previous}
+            next={next}
+            checking={checking}
             continueDisabled={continueDisabled}
+            onTabAction={handleTab}
+            onContinueAction={handleContinue}
+            showStatus
+            isBottom
           />
         </section>
       ) : (
@@ -240,7 +283,7 @@ export function ResearchSetup({
             className="nano-setup-stage nano-step-in"
             key={tab}
           >
-            <LibrarySelection category={active.id} onChangedAction={handleChanged} />
+            <LibrarySelection category={active.id as LibraryCategory} onChangedAction={handleChanged} />
           </section>
 
           <SetupActions
@@ -317,7 +360,7 @@ function SetupActions({
               </ul>
             </div>
           ) : readiness ? (
-            <p role="status">All three selections are complete.</p>
+            <p role="status">All setup sections are complete.</p>
           ) : null}
         </div>
       ) : (

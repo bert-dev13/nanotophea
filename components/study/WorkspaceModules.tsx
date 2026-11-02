@@ -6,11 +6,13 @@ import { StatisticsWorkspace } from "@/components/analysis/StatisticsWorkspace"
 import { PredictionWorkspace } from "@/components/insilico/prediction/PredictionWorkspace"
 import { AssayWorkspace } from "@/components/lab/AssayWorkspace"
 import { CharacterizationWorkspace } from "@/components/lab/CharacterizationWorkspace"
+import { useStudy } from "@/components/providers/StudyProvider"
 import CellLinesCatalog from "@/components/panels/research/CellLinesCatalog"
 import FormulationPanel from "@/components/panels/research/FormulationPanel"
 import PhytochemicalsCatalog from "@/components/panels/research/PhytochemicalsCatalog"
 import ProteinsCatalog from "@/components/panels/research/ProteinsCatalog"
 import ReferencesCatalog from "@/components/panels/research/ReferencesCatalog"
+import { NanoparticleFormulationWorkspace } from "@/components/study/setup/NanoparticleFormulationWorkspace"
 import type { PredictionEndpoint } from "@/lib/domain/models"
 import type { StepId, StudyReadiness } from "@/lib/workflow/studyFlow"
 
@@ -32,7 +34,10 @@ interface WorkspaceModulesProps {
 }
 
 export function WorkspaceModules({ step, tab, readiness, onOpenTab, onOpenSetup }: WorkspaceModulesProps) {
-  if (step === "setup" && tab === "formulation") return <FormulationPanel />
+  const { activeStudy } = useStudy()
+  if (step === "setup" && (tab === "nanoparticle" || tab === "formulation")) {
+    return <NanoparticleFormulationWorkspace studyId={activeStudy?.id || ""} />
+  }
   if (step === "setup" && tab === "phytochemicals") return <PhytochemicalsCatalog />
   if (step === "setup" && tab === "proteins") return <ProteinsCatalog />
   if (step === "setup" && tab === "cell-line") return <CellLinesCatalog />
