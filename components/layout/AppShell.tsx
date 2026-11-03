@@ -40,37 +40,37 @@ function AuthenticatedShell({ children }: { children: ReactNode }) {
   return (
     <StudyProvider>
       <WorkflowStatusProvider>
-      <ResearchAssistantProvider>
-      <div
-        className={`nano-shell relative flex min-h-screen bg-[var(--background)] text-[var(--foreground)] selection:bg-emerald-500/30 selection:text-emerald-200 ${
-          assistant ? "nano-shell--workspace" : ""
-        } ${ready ? "nano-shell--in" : "opacity-0"}`}
-      >
-        {/* Atmospheric Ambient Glow Orbs for Workspace */}
-        <div
-          className="login-orb-1 pointer-events-none fixed -left-20 -top-20 h-[36rem] w-[36rem] rounded-full bg-emerald-500/10 blur-[150px]"
-          aria-hidden
-        />
-        <div
-          className="login-orb-2 pointer-events-none fixed -bottom-32 -right-20 h-[38rem] w-[38rem] rounded-full bg-teal-500/10 blur-[160px]"
-          aria-hidden
-        />
-        <div className="login-grid-bg pointer-events-none fixed inset-0 z-0 opacity-40" aria-hidden />
+        <ResearchAssistantProvider>
+          <div
+            className={`nano-shell relative flex min-h-screen bg-[var(--background)] text-[var(--foreground)] selection:bg-emerald-500/30 selection:text-emerald-200 ${
+              assistant ? "nano-shell--workspace" : ""
+            } ${ready ? "nano-shell--in" : "opacity-0"}`}
+          >
+            {/* Atmospheric Ambient Glow Orbs for Workspace */}
+            <div
+              className="login-orb-1 pointer-events-none fixed -left-20 -top-20 h-[36rem] w-[36rem] rounded-full bg-emerald-500/10 blur-[150px]"
+              aria-hidden
+            />
+            <div
+              className="login-orb-2 pointer-events-none fixed -bottom-32 -right-20 h-[38rem] w-[38rem] rounded-full bg-teal-500/10 blur-[160px]"
+              aria-hidden
+            />
+            <div className="login-grid-bg pointer-events-none fixed inset-0 z-0 opacity-40" aria-hidden />
 
-        <AppNav
-          mobileOpen={mobileOpen}
-          onCloseMobile={() => setMobileOpen(false)}
-        />
+            <AppNav
+              mobileOpen={mobileOpen}
+              onCloseMobile={() => setMobileOpen(false)}
+            />
 
-        <div className={`relative z-10 flex min-w-0 flex-1 flex-col ${assistant ? "min-h-0" : ""}`}>
-          <AppHeader onOpenMobileNav={() => setMobileOpen(true)} />
-          <main className={assistant ? "nano-assistant-main" : "nano-main-in flex-1 w-full px-4 sm:px-6 lg:px-8 py-6"}>
-            {children}
-          </main>
-          {assistant ? null : <AppFooter />}
-        </div>
-      </div>
-      </ResearchAssistantProvider>
+            <div className={`relative z-10 flex min-w-0 flex-1 flex-col ${assistant ? "min-h-0" : ""}`}>
+              <AppHeader onOpenMobileNav={() => setMobileOpen(true)} />
+              <main className={assistant ? "nano-assistant-main" : "nano-main-in flex-1 w-full px-4 sm:px-6 lg:px-8 py-6"}>
+                {children}
+              </main>
+              {assistant ? null : <AppFooter />}
+            </div>
+          </div>
+        </ResearchAssistantProvider>
       </WorkflowStatusProvider>
     </StudyProvider>
   )
@@ -87,7 +87,7 @@ function Gate({ children }: { children: ReactNode }) {
     if (user && signingIn && pathname === "/") router.replace("/")
   }, [user, signingIn, pathname, router])
 
-  if (loading) return <LoadingBrand label="Checking authentication…" />
+  if (loading) return <LoadingBrand label="Checking authentication..." />
   if (!user && pathname === "/" && !signingIn) return <LandingPage />
   if (!user) return <LoginScreen />
   return <AuthenticatedShell>{children}</AuthenticatedShell>
@@ -101,12 +101,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [])
 
   if (!mounted) {
-    return <LoadingBrand label="Loading NANOTOPHEA…" />
+    return <LoadingBrand label="Loading NANO-HEPATOTEA..." />
   }
+
+  const loadingFallback = <LoadingBrand label="Loading NANO-HEPATOTEA..." />
 
   return (
     <AuthProvider>
-      <Suspense fallback={<LoadingBrand label="Loading NANOTOPHEA…" />}>
+      <Suspense fallback={loadingFallback}>
         <Gate>{children}</Gate>
       </Suspense>
     </AuthProvider>

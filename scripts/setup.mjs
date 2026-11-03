@@ -87,7 +87,7 @@ function computeSha256(filePath) {
 // MAIN SETUP
 // -----------------------------------------------------------------------------
 async function main() {
-  printHeader("NANOTOPHEA: Cross-Device Environment Setup")
+  printHeader("NANO-HEPATOTEA: Cross-Device Environment Setup")
 
   // =============================================================================
   // [1/7] Node.js & npm
@@ -96,7 +96,7 @@ async function main() {
   const nodeVer = process.version
   const nodeMajor = parseInt(nodeVer.replace(/^v/, "").split(".")[0], 10)
   if (nodeMajor < 18) {
-    logFail(`Node.js ${nodeVer} is too old. NANOTOPHEA requires Node.js v18 or newer.`, "Download and install from https://nodejs.org/")
+    logFail(`Node.js ${nodeVer} is too old. NANO-HEPATOTEA requires Node.js v18 or newer.`, "Download and install from https://nodejs.org/")
     process.exit(1)
   }
   logOk(`Node.js runtime: ${nodeVer}`)
@@ -332,7 +332,7 @@ async function main() {
   // =============================================================================
   console.log("")
   console.log("\x1b[32m===============================================================================\x1b[0m")
-  console.log("\x1b[32m                         NANOTOPHEA SETUP COMPLETE\x1b[0m")
+  console.log("\x1b[32m                       NANO-HEPATOTEA SETUP COMPLETE\x1b[0m")
   console.log("\x1b[32m===============================================================================\x1b[0m")
   console.log("")
   console.log("  Node.js ........... \x1b[32m✓\x1b[0m")
@@ -343,7 +343,7 @@ async function main() {
   console.log("  AutoDock Vina ..... \x1b[32m✓\x1b[0m")
   console.log("  Docking Engine .... \x1b[32m✓\x1b[0m")
   console.log("")
-  console.log("Start NANOTOPHEA:")
+  console.log("Start NANO-HEPATOTEA:")
   console.log("")
   console.log("    \x1b[36mnpm run dev:share\x1b[0m")
   console.log("")

@@ -50,7 +50,7 @@ export function getRcsbCoordinates(pdbId: string): Promise<string> {
   const id = assertPdbId(pdbId)
   return cached(`rcsb:pdb:${id}`, async () => {
     const response = await fetch(`https://files.rcsb.org/download/${id}.pdb`, {
-      headers: { "User-Agent": "NANOTOPHEA" },
+      headers: { "User-Agent": "NANO-HEPATOTEA" },
       signal: AbortSignal.timeout(25_000),
     })
     if (!response.ok) throw new Error("RCSB structure file request failed")
@@ -68,7 +68,7 @@ export function assertPdbId(pdbId: string): string {
 
 async function rcsbJson(url: string): Promise<unknown> {
   const response = await fetch(url, {
-    headers: { Accept: "application/json", "User-Agent": "NANOTOPHEA" },
+    headers: { Accept: "application/json", "User-Agent": "NANO-HEPATOTEA" },
     signal: AbortSignal.timeout(20_000),
   })
   if (!response.ok) throw new Error("RCSB request failed")

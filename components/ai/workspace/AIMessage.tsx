@@ -15,7 +15,7 @@ export function AIMessage({ message }: { message: AiChatMessage }) {
     <li className="ai-turn" data-role="assistant">
       <div className="ai-ident">
         <span aria-hidden><Sparkles size={13} strokeWidth={1.85} /></span>
-        <strong>NANOTOPHEA AI</strong>
+        <strong>NANO-HEPATOTEA AI</strong>
       </div>
       <ResearchAnswer text={message.content} />
     </li>

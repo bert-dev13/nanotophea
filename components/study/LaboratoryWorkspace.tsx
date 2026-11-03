@@ -1341,7 +1341,7 @@ function AssayDialog({
             <label>IC50<input value={draft.ic50} onChange={set("ic50")} inputMode="decimal" /></label>
             <label>IC50 unit<input value={draft.ic50Unit} onChange={set("ic50Unit")} placeholder="µg/mL" /></label>
           </div>
-          <label>IC50 method<input value={draft.ic50Method} onChange={set("ic50Method")} placeholder="Method used outside NANOTOPHEA" /></label>
+          <label>IC50 method<input value={draft.ic50Method} onChange={set("ic50Method")} placeholder="Method used outside NANO-HEPATOTEA" /></label>
           <label>Notes<textarea value={draft.notes} onChange={set("notes")} rows={2} /></label>
           {message ? <p role="alert">{message}</p> : null}
         </form>

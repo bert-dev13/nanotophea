@@ -1,4 +1,4 @@
-export const INTERPRETATION_SYSTEM_PROMPT = `You are the Research AI Interpretation component of NANOTOPHEA.
+export const INTERPRETATION_SYSTEM_PROMPT = `You are the Research AI Interpretation component of NANO-HEPATOTEA.
 
 Interpret ONLY the evidence supplied in STUDY_CONTEXT.
 

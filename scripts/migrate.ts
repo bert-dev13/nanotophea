@@ -115,7 +115,7 @@ async function runStatus(): Promise<void> {
     const allMigrations = await getMigrationsList()
 
     console.log("\n=======================================================")
-    console.log("            NANOTOPHEA DATABASE MIGRATIONS")
+    console.log("          NANO-HEPATOTEA DATABASE MIGRATIONS")
     console.log("=======================================================\n")
 
     for (const { migration } of allMigrations) {
@@ -151,7 +151,7 @@ async function runMigrate(): Promise<void> {
     const allMigrations = await getMigrationsList()
     const pendingMigrations = allMigrations.filter((m) => !appliedIds.has(m.migration.id))
 
-    console.log("NANOTOPHEA DATABASE MIGRATIONS\n")
+    console.log("NANO-HEPATOTEA DATABASE MIGRATIONS\n")
 
     for (const item of allMigrations) {
       const { migration } = item

@@ -32,7 +32,7 @@ loadEnv()
 
 async function main() {
   console.log("=======================================================")
-  console.log("    NANOTOPHEA MOLECULAR DOCKING WORKER VERIFICATION")
+  console.log("  NANO-HEPATOTEA MOLECULAR DOCKING WORKER VERIFICATION")
   console.log("=======================================================\n")
 
   let allOk = true

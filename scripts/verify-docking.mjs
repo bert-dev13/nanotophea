@@ -15,7 +15,7 @@ const vina = isWin
   : path.join(root, "tools", "vina", "vina")
 
 console.log("=======================================================")
-console.log("       NANOTOPHEA REAL AUTODOCK VINA DOCKING TEST")
+console.log("     NANO-HEPATOTEA REAL AUTODOCK VINA DOCKING TEST")
 console.log("=======================================================\n")
 
 // 1. Toolchain Check

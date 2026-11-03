@@ -6,7 +6,7 @@
 function logDevDatabaseError(error: unknown) {
   if (typeof process !== "undefined" && process.env.NODE_ENV === "development") {
     // Technical detail for developers only
-    console.warn("[NANOTOPHEA] Database/permission detail:", error)
+    console.warn("[NANO-HEPATOTEA] Database/permission detail:", error)
   }
 }
 

@@ -525,7 +525,7 @@ export function Stage6Report({
             <Sparkles size={18} strokeWidth={1.85} />
           </span>
           <div>
-            <p>NANOTOPHEA AI</p>
+            <p>NANO-HEPATOTEA AI</p>
             <h2 id="stage6-ai">Research AI Interpretation</h2>
           </div>
           {updated ? <p className="stage6-updated" role="status"><Check size={14} aria-hidden /> Interpretation updated</p> : null}

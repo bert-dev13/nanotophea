@@ -3,7 +3,7 @@
 import Link from "next/link"
 
 export const NANO_LOGO_SRC = "/nano-logo.png"
-export const NANO_LOGO_ALT = "NANOTOPHEA — Natural Products Research Platform"
+export const NANO_LOGO_ALT = "NANO-HEPATOTEA — Natural Products Research Platform"
 
 type BrandLogoSize = "sm" | "md" | "lg" | "hero"
 
@@ -15,7 +15,7 @@ const SIZE: Record<BrandLogoSize, { w: number; h: number; className: string }> =
 }
 
 /**
- * Official NANOTOPHEA mark from /public/nano-logo.png.
+ * Official NANO-HEPATOTEA mark from /public/nano-logo.png.
  */
 export function BrandLogo({
   size = "md",
@@ -60,7 +60,7 @@ export function BrandLockup({
           className={`block font-black tracking-tight leading-tight ${titleClass}`}
           style={{ color: "#0d1f3c", letterSpacing: "-0.01em" }}
         >
-          NANOTOPHEA
+          NANO-HEPATOTEA
         </span>
         {subtitle ? (
           <span className="block text-xs font-medium truncate" style={{ color: "#546e8a" }}>

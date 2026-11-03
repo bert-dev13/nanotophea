@@ -207,7 +207,7 @@ function classify(text: string, page: AiPageContext): ConversationPlan | null {
     return plan("GENERAL_CONVERSATION", "none", null, "Answer in one or two natural sentences. Do not mention study results unless the researcher asked about them. Do not use report headings.")
   }
   if (isPlatform(lower)) {
-    return plan("PLATFORM_QUESTION", "none", null, "Explain NANOTOPHEA in one short paragraph, using only the platform description in your instructions. Do not add collaboration features, curated libraries, traditional-use claims, or this study's measurements.")
+    return plan("PLATFORM_QUESTION", "none", null, "Explain NANO-HEPATOTEA in one short paragraph, using only the platform description in your instructions. Do not add collaboration features, curated libraries, traditional-use claims, or this study's measurements.")
   }
   if (isRecommendation(lower)) {
     return plan("RECOMMENDATION", "recommendation", endpoint, "Give a short, cautious recommendation from the recorded evidence gaps. Do not invent concentrations, assay protocols, instrument settings, experimental thresholds, or ADME values. Do not write a formal report.")
@@ -216,7 +216,7 @@ function classify(text: string, page: AiPageContext): ConversationPlan | null {
     return plan("LIMITATION", "limitations", endpoint, "State only limitations supported by the supplied evidence. Do not invent missing measurements or citations.")
   }
   if (isWorkflow(lower)) {
-    return plan("WORKFLOW_HELP", "workflow", null, "Explain where this study is in the NANOTOPHEA workflow and what recorded evidence is still missing. Keep it practical and short.")
+    return plan("WORKFLOW_HELP", "workflow", null, "Explain where this study is in the NANO-HEPATOTEA workflow and what recorded evidence is still missing. Keep it practical and short.")
   }
   if (isComparison(lower)) {
     return plan("EVIDENCE_COMPARISON", endpoint ? "endpoint" : "comparison", endpoint, "Compare only compatible recorded evidence. If units, concentrations, or conditions are not both recorded, say a direct numerical comparison is not available. Do not treat simulation as experimental validation.")
@@ -368,7 +368,7 @@ function isSmallTalk(value: string): boolean {
 }
 
 function isPlatform(value: string): boolean {
-  return /what is nanotophea|what's nanotophea|ano ang nanotophea|什么是\s*nanotophea|什麼是\s*nanotophea|who are you|what can you do/.test(value)
+  return /what is nano-?hepatotea|what's nano-?hepatotea|ano ang nano-?hepatotea|什么是\s*nano-?hepatotea|什麼是\s*nano-?hepatotea|what is nanotophea|what's nanotophea|ano ang nanotophea|什么是\s*nanotophea|什麼是\s*nanotophea|who are you|what can you do/i.test(value)
 }
 
 function isRecommendation(value: string): boolean {

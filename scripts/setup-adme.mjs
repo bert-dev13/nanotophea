@@ -138,7 +138,7 @@ export async function setupAdmeEnvironment() {
   // Find host Python 3.11
   const hostPython = detectPython311()
   if (!hostPython) {
-    logFail("Python 3.11 is required for NANOTOPHEA's scientific stack (RDKit, Chemprop, Meeko, OpenBabel).")
+    logFail("Python 3.11 is required for NANO-HEPATOTEA's scientific stack (RDKit, Chemprop, Meeko, OpenBabel).")
     logWarn("Please install Python 3.11 from https://www.python.org/downloads/release/python-3110/")
     logWarn("Make sure to check 'Add Python to PATH' and install the 'py' launcher during installation.")
     return false
@@ -203,7 +203,7 @@ export async function setupAdmeEnvironment() {
 if (process.argv[1] && process.argv[1].endsWith("setup-adme.mjs")) {
   console.log("")
   console.log("===============================================================================")
-  console.log("             NANOTOPHEA PYTHON SCIENTIFIC SETUP (.adme-venv)")
+  console.log("           NANO-HEPATOTEA PYTHON SCIENTIFIC SETUP (.adme-venv)")
   console.log("===============================================================================")
   console.log("")
   setupAdmeEnvironment().then((ok) => {

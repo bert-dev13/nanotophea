@@ -1,4 +1,4 @@
-# NANOTOPHEA
+# NANO-HEPATOTEA
 
 **NanoHepatoTea Bioinformatics Research Platform**
 

@@ -64,7 +64,7 @@ export function ResearchContext() {
             </h2>
 
             <p className="lp-lead text-[var(--lp-copy)] leading-relaxed">
-              NANOTOPHEA supports the computational and experimental assessment of selected phytochemicals and
+              NANO-HEPATOTEA supports the computational and experimental assessment of selected phytochemicals and
               their potential interactions with liver-cancer-related biological targets.
             </p>
 

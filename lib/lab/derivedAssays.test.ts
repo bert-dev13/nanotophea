@@ -118,6 +118,6 @@ describe("laboratory section progress", () => {
       proteins: [{ id: "p", name: "BAX" }],
       cellLines: [{ id: "h", name: "HepG2" }],
     }).map((section) => section.label)
-    assert.deepEqual(sections, ["DPPH", "MTT", "LDH", "ROS", "BAX", "Hippo–YAP", "Product Characterization"])
+    assert.deepEqual(sections, ["DPPH", "MTT", "LDH", "ROS", "BAX", "Hippo–YAP"])
   })
 })

@@ -14,7 +14,7 @@ const vinaBin = process.platform === "win32"
 
 console.log("")
 console.log("===============================================================================")
-console.log("                           NANOTOPHEA DEVELOPMENT")
+console.log("                         NANO-HEPATOTEA DEVELOPMENT")
 console.log("===============================================================================")
 console.log("")
 
@@ -88,7 +88,7 @@ function shutdown() {
   for (const child of children) stop(child)
 }
 
-console.log("Starting NANOTOPHEA...")
+console.log("Starting NANO-HEPATOTEA...")
 console.log("Starting local ADME service...")
 console.log("")
 console.log(`Next.js ........... \x1b[32m✓ Running\x1b[0m (http://localhost:3000)`)

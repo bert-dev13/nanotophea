@@ -18,7 +18,7 @@ const sans = Source_Sans_3({
 })
 
 export const metadata: Metadata = {
-  title: "NANOTOPHEA · NanoHepatoTea Research Platform",
+  title: "NANO-HEPATOTEA · Research Platform",
   description:
     "Research-aligned bioinformatics platform separating computational predictions, laboratory results, and researcher interpretation for NanoHepatoTea.",
   robots: { index: false, follow: false },

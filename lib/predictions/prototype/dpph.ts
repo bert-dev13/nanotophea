@@ -18,7 +18,7 @@ export function simulateDpph(features: PredictionFeatures): PrototypePredictionR
   }))
   return finishPrototype({
     endpoint: "dpph",
-    modelName: "NANOTOPHEA DPPH",
+    modelName: "NANO-HEPATOTEA DPPH",
     features,
     series,
     outputs: {

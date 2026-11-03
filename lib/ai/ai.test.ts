@@ -123,6 +123,7 @@ describe("conversation planning", () => {
       assert.equal(context, "")
       assert.notEqual(plan.intent, "RESULT_EXPLANATION")
     }
+    assert.equal(planConversation(history("What is NANO-HEPATOTEA?")).intent, "PLATFORM_QUESTION")
     assert.equal(planConversation(history("What is NANOTOPHEA?")).intent, "PLATFORM_QUESTION")
     assert.equal(planConversation(history("Thanks")).intent, "GENERAL_CONVERSATION")
   })

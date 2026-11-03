@@ -6,9 +6,9 @@
 import { execute, query, queryOne, getPool } from "../lib/db/mysql"
 import { hashPassword } from "../lib/auth/password"
 
-const EMAIL = process.env.NANOTOPHEA_ADMIN_EMAIL || "admin@demo.com"
-const PASSWORD = process.env.NANOTOPHEA_ADMIN_PASSWORD || "admin123"
-const DISPLAY_NAME = "NANOTOPHEA Admin"
+const EMAIL = process.env.NANO_HEPATOTEA_ADMIN_EMAIL || process.env.NANOTOPHEA_ADMIN_EMAIL || "admin@demo.com"
+const PASSWORD = process.env.NANO_HEPATOTEA_ADMIN_PASSWORD || process.env.NANOTOPHEA_ADMIN_PASSWORD || "admin123"
+const DISPLAY_NAME = "NANO-HEPATOTEA Admin"
 const KNOWN_ADMIN_UID = "g1dxux39lfeAb8RbvLEWgQ1IH6f2"
 
 function nowIso() {
@@ -78,7 +78,7 @@ async function repairOwnedStudyMemberships(uid: string) {
 }
 
 async function main() {
-  console.log("=== SEEDING NANOTOPHEA ADMIN USER IN MYSQL ===")
+  console.log("=== SEEDING NANO-HEPATOTEA ADMIN USER IN MYSQL ===")
   const uid = await ensureAdminUser()
   await repairOwnedStudyMemberships(uid)
   console.log("=== ADMIN SEED COMPLETE ===")

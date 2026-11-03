@@ -73,7 +73,7 @@ export function assertCid(cid: number) {
 
 async function pubchem(url: string, allowMissing = false): Promise<Response> {
   const response = await fetch(url, {
-    headers: { Accept: "application/json, chemical/x-mdl-sdfile, image/png, */*", "User-Agent": "NANOTOPHEA" },
+    headers: { Accept: "application/json, chemical/x-mdl-sdfile, image/png, */*", "User-Agent": "NANO-HEPATOTEA" },
     signal: AbortSignal.timeout(20_000),
   })
   if (!response.ok) {

@@ -22,7 +22,7 @@ export function HeroSection() {
               <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
             </span>
             <span className="text-[11px] font-semibold tracking-wider uppercase text-[var(--lp-badge-text)]">
-              NANOTOPHEA Research Platform
+              NANO-HEPATOTEA Research Platform
             </span>
           </div>
 
@@ -86,7 +86,7 @@ export function HeroSection() {
             <div className="relative rounded-3xl border border-[var(--lp-badge-border)] bg-[var(--lp-surface-card)] p-8 sm:p-12 shadow-2xl backdrop-blur-xl">
               <img
                 src="/nano-logo.png"
-                alt="NANOTOPHEA — Natural Products Research Platform"
+                alt="NANO-HEPATOTEA — Natural Products Research Platform"
                 width={420}
                 height={420}
                 decoding="async"

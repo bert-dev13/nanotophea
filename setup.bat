@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title NANOTOPHEA Setup
+title NANO-HEPATOTEA Setup
 
 where node >nul 2>&1
 if %ERRORLEVEL% neq 0 (

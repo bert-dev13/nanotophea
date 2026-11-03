@@ -374,7 +374,7 @@ export default function DockingWorkspace() {
     <ModuleShell
       icon={Cpu}
       title="Molecular Docking"
-      subtitle="Import and review actual AutoDock Vina results. NANOTOPHEA does not execute Vina in this phase."
+      subtitle="Import and review actual AutoDock Vina results. NANO-HEPATOTEA does not execute Vina in this phase."
       evidence="PREDICTED"
       phase="insilico"
       contractNote="AutoDock Vina computational prediction. Docking affinity is a computational prediction and does not constitute experimental evidence. No AI confidence, fake ΔG, or simulated modes."

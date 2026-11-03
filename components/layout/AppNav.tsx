@@ -153,7 +153,7 @@ function NavPanel({
           href="/"
           className="nano-side-brand group flex items-center gap-3 min-w-0"
           onClick={closeIfMobile}
-          aria-label="NANOTOPHEA studies"
+          aria-label="NANO-HEPATOTEA studies"
         >
           <div className="login-pulse-ring relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-500/30 bg-[var(--sidebar-surface)] shadow-md">
             <BrandLogo
@@ -164,7 +164,7 @@ function NavPanel({
           </div>
           <div className="min-w-0">
             <span className="block font-display font-extrabold text-sm tracking-wide text-[var(--sidebar-foreground)] group-hover:text-emerald-400 transition-colors">
-              NANOTOPHEA
+              NANO-HEPATOTEA
             </span>
             <div className="flex items-center gap-1.5 mt-0.5">
               <span className="relative flex h-1.5 w-1.5">
