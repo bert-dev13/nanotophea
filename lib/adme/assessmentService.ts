@@ -14,6 +14,7 @@ export const PROTOTYPE_ADME_UNAVAILABLE = "ADME data is not available for this c
 
 export interface AdmeAssessmentQuery {
   compoundId: string
+  compoundName?: string
   pubchemCid?: number
   smiles?: string
 }
@@ -36,6 +37,7 @@ export interface AdmeAssessmentService {
 export function hardcodedAdmeAssessment(query: AdmeAssessmentQuery): AdmeServiceAssessment | null {
   const record = lookupPrototypeAdme({
     compoundId: query.compoundId,
+    compoundName: query.compoundName,
     pubchemCid: query.pubchemCid,
     smiles: normalizePrototypeSmiles(query.smiles),
   })

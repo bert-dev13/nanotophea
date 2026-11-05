@@ -151,6 +151,9 @@ export async function loadStudyReadiness(studyId: string): Promise<StudyReadines
     )
   }
 
+  const screenedIdSet = new Set(screenedCompoundIds(compounds.map((c) => c.id), admetRuns))
+  const eligibleCompounds = compounds.filter((c) => screenedIdSet.has(c.id))
+
   return emptyReadiness({
     formulations: formulations.length + (nanoparticle ? 1 : 0),
     compounds: compounds.length,
@@ -160,7 +163,7 @@ export async function loadStudyReadiness(studyId: string): Promise<StudyReadines
     references: references.length,
     admetRuns: admetRuns.length,
     dockingRuns: dockingRuns.completed.length + dockingRuns.skipped.length,
-    ...dockingProgress(compounds, proteins, [...dockingRuns.completed, ...dockingRuns.skipped]),
+    ...dockingProgress(eligibleCompounds.length > 0 ? eligibleCompounds : compounds, proteins, [...dockingRuns.completed, ...dockingRuns.skipped]),
     predictionRuns: predictionRuns.length,
     predictionRequired: predictions.required,
     predictionRecorded: predictions.recorded,

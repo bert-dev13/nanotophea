@@ -105,7 +105,22 @@ export async function createAdmetRun(
       input_smiles, generated_at, pubchem_retrieved, lipinski_overall,
       descriptors, raw, status, assessment_origin, provenance, notes,
       created_at, updated_at, created_by, updated_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      compound_name=VALUES(compound_name),
+      pubchem_cid=VALUES(pubchem_cid),
+      input_smiles=VALUES(input_smiles),
+      generated_at=VALUES(generated_at),
+      pubchem_retrieved=VALUES(pubchem_retrieved),
+      lipinski_overall=VALUES(lipinski_overall),
+      descriptors=VALUES(descriptors),
+      raw=VALUES(raw),
+      status=VALUES(status),
+      assessment_origin=VALUES(assessment_origin),
+      provenance=VALUES(provenance),
+      notes=VALUES(notes),
+      updated_at=VALUES(updated_at),
+      updated_by=VALUES(updated_by)`,
     [
       record.id,
       studyId,
@@ -134,6 +149,17 @@ export async function createAdmetRun(
       record.updatedBy,
     ]
   )
+
+  if (input.compoundId) {
+    try {
+      await execute(
+        `UPDATE phytochemicals SET screening_reviewed_at = ?, updated_at = ? WHERE study_id = ? AND id = ?`,
+        [now, now, studyId, input.compoundId]
+      )
+    } catch (err) {
+      console.warn("[saveAutomaticAdmeRun] Could not update screening_reviewed_at:", err)
+    }
+  }
 
   await writeAuditLog({
     studyId,
@@ -210,8 +236,20 @@ export async function savePrototypeAdmeRun(
       created_at, updated_at, created_by, updated_by
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
-      descriptors=VALUES(descriptors), status=VALUES(status), assessment_origin=VALUES(assessment_origin),
-      provenance=VALUES(provenance), updated_at=VALUES(updated_at)`,
+      compound_name=VALUES(compound_name),
+      pubchem_cid=VALUES(pubchem_cid),
+      input_smiles=VALUES(input_smiles),
+      generated_at=VALUES(generated_at),
+      pubchem_retrieved=VALUES(pubchem_retrieved),
+      lipinski_overall=VALUES(lipinski_overall),
+      descriptors=VALUES(descriptors),
+      raw=VALUES(raw),
+      status=VALUES(status),
+      assessment_origin=VALUES(assessment_origin),
+      provenance=VALUES(provenance),
+      notes=VALUES(notes),
+      updated_at=VALUES(updated_at),
+      updated_by=VALUES(updated_by)`,
     [
       record.id,
       studyId,
@@ -240,6 +278,15 @@ export async function savePrototypeAdmeRun(
       record.updatedBy,
     ]
   )
+
+  try {
+    await execute(
+      `UPDATE phytochemicals SET screening_reviewed_at = ?, updated_at = ? WHERE study_id = ? AND id = ?`,
+      [now, now, studyId, input.compoundId]
+    )
+  } catch (err) {
+    console.warn("[savePrototypeAdmeRun] Could not update screening_reviewed_at:", err)
+  }
 
   await writeAuditLog({
     studyId,

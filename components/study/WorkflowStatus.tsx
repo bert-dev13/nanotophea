@@ -20,7 +20,7 @@ import type { StudyReadiness } from "@/lib/workflow/studyFlow"
 interface WorkflowStatusValue {
   readiness: StudyReadiness | null
   error: string | null
-  refresh: () => Promise<StudyReadiness | null>
+  refresh: (options?: { force?: boolean }) => Promise<StudyReadiness | null>
 }
 
 const WorkflowStatusContext = createContext<WorkflowStatusValue | null>(null)
@@ -36,31 +36,70 @@ export function WorkflowStatusProvider({ children }: { children: ReactNode }) {
   const [readiness, setReadiness] = useState<StudyReadiness | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const refresh = useCallback(async () => {
-    if (authLoading || studyLoading) return null
-    if (!user) {
-      setReadiness(null)
-      setError(null)
-      return null
-    }
-    const requested = studyIdRef.current
-    if (!requested) {
-      setReadiness(null)
-      setError(null)
-      return null
-    }
-    try {
-      const next = await loadStudyReadiness(requested)
-      if (studyIdRef.current !== requested) return null
-      setReadiness(next)
-      setError(null)
-      return next
-    } catch (e) {
-      if (studyIdRef.current !== requested) return null
-      setError(toUserFacingError(e, "Could not check required records."))
-      return null
-    }
-  }, [authLoading, studyLoading, user])
+  const inFlightRef = useRef<Promise<StudyReadiness | null> | null>(null)
+  const pendingRerunRef = useRef(false)
+  const lastFetchedRef = useRef<{ studyId: string; time: number; readiness: StudyReadiness } | null>(null)
+
+  const refresh = useCallback(
+    async (options?: { force?: boolean }): Promise<StudyReadiness | null> => {
+      if (authLoading || studyLoading) return null
+      if (!user) {
+        setReadiness(null)
+        setError(null)
+        return null
+      }
+      const requested = studyIdRef.current
+      if (!requested) {
+        setReadiness(null)
+        setError(null)
+        return null
+      }
+
+      const now = Date.now()
+      if (
+        !options?.force &&
+        lastFetchedRef.current?.studyId === requested &&
+        now - lastFetchedRef.current.time < 1200
+      ) {
+        return lastFetchedRef.current.readiness
+      }
+
+      if (inFlightRef.current) {
+        pendingRerunRef.current = true
+        return inFlightRef.current
+      }
+
+      const run = async (): Promise<StudyReadiness | null> => {
+        try {
+          const next = await loadStudyReadiness(requested)
+          if (studyIdRef.current === requested) {
+            setReadiness(next)
+            setError(null)
+            lastFetchedRef.current = { studyId: requested, time: Date.now(), readiness: next }
+          }
+          return next
+        } catch (e) {
+          if (studyIdRef.current === requested) {
+            setError(toUserFacingError(e, "Could not check required records."))
+          }
+          return null
+        } finally {
+          inFlightRef.current = null
+          if (pendingRerunRef.current && studyIdRef.current === requested) {
+            pendingRerunRef.current = false
+            void refresh({ force: true })
+          } else {
+            pendingRerunRef.current = false
+          }
+        }
+      }
+
+      const promise = run()
+      inFlightRef.current = promise
+      return promise
+    },
+    [authLoading, studyLoading, user]
+  )
 
   useEffect(() => {
     setReadiness(null)

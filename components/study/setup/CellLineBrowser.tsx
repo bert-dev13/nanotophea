@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ArrowLeft, ArrowRight, Check, Microscope, Plus, Search, X } from "lucide-react"
 import { useAuth } from "@/components/providers/AuthProvider"
 import { useStudy } from "@/components/providers/StudyProvider"
@@ -41,13 +41,27 @@ export function CellLineBrowser({
   const [rows, setRows] = useState<CellLineRecord[]>([])
   const [datasets, setDatasets] = useState<LabDataset[]>([])
   const [loading, setLoading] = useState(true)
-  const [busyKey, setBusyKey] = useState<string | null>(null)
+  const [pendingKeys, setPendingKeys] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("all")
   const [viewKey, setViewKey] = useState(CATALOG_CELL_LINES[0]?.key ?? "")
   const [mobilePane, setMobilePane] = useState<"library" | "detail">("library")
   const [showSelected, setShowSelected] = useState(false)
+  const changeDebounceTimer = useRef<NodeJS.Timeout | null>(null)
+
+  const triggerDebouncedChanged = useCallback(() => {
+    if (changeDebounceTimer.current) clearTimeout(changeDebounceTimer.current)
+    changeDebounceTimer.current = setTimeout(() => {
+      handleChanged()
+    }, 300)
+  }, [handleChanged])
+
+  useEffect(() => {
+    return () => {
+      if (changeDebounceTimer.current) clearTimeout(changeDebounceTimer.current)
+    }
+  }, [])
 
   const load = useCallback(async () => {
     if (!activeStudy) return
@@ -93,16 +107,25 @@ export function CellLineBrowser({
   const selectedCount = selectedItems.length
   const collapsed = selectedCount > 4 && !showSelected
 
-  const toggle = async (item: CatalogCellLine) => {
-    if (!activeStudy || !user || busyKey) return
-    const existing = byName.get(item.name)
-    setBusyKey(item.key)
-    setError(null)
-    try {
+  const toggle = useCallback(
+    async (item: CatalogCellLine) => {
+      if (!activeStudy || !user) return
+      const existing = byName.get(item.name)
+      const prevRows = rows
+      setError(null)
+      setPendingKeys((prev) => {
+        const next = new Set(prev)
+        next.add(item.key)
+        return next
+      })
+
+      // Instant optimistic update
       if (existing) {
-        await deleteCellLine(activeStudy.id, existing.id, { id: user.uid })
+        setRows((prev) => prev.filter((r) => r.name.toLowerCase() !== item.name.toLowerCase()))
       } else {
-        await createCellLine(activeStudy.id, { id: user.uid }, {
+        const optimistic: CellLineRecord = {
+          id: `temp-${item.key}-${Date.now()}`,
+          studyId: activeStudy.id,
           name: item.name,
           fullName: item.fullName,
           organism: item.organism,
@@ -115,24 +138,61 @@ export function CellLineBrowser({
           notes: item.notes,
           referenceIds: [],
           isPrimaryExperimental: false,
-          provenance: item.source ? { source: item.source } : undefined,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          createdBy: user.uid,
+          updatedBy: user.uid,
+          provenance: {
+            evidenceClass: "REFERENCE",
+            source: item.source || "Catalog",
+          },
+        }
+        setRows((prev) => [...prev, optimistic])
+      }
+
+      try {
+        if (existing) {
+          await deleteCellLine(activeStudy.id, existing.id, { id: user.uid })
+        } else {
+          const created = await createCellLine(activeStudy.id, { id: user.uid }, {
+            name: item.name,
+            fullName: item.fullName,
+            organism: item.organism,
+            tissueOrigin: item.tissueOrigin,
+            diseaseContext: item.diseaseContext,
+            lineType: item.lineType,
+            p53Status: item.p53Status,
+            hbvStatus: item.hbvStatus,
+            sourceDatabase: item.source,
+            notes: item.notes,
+            referenceIds: [],
+            isPrimaryExperimental: false,
+            provenance: item.source ? { source: item.source } : undefined,
+          })
+          setRows((prev) =>
+            prev.map((r) => (r.name.toLowerCase() === item.name.toLowerCase() ? created : r))
+          )
+        }
+        await updateActiveStudy({ primaryCellLine: item.name })
+        triggerDebouncedChanged()
+      } catch (e) {
+        setRows(prevRows)
+        setError(toUserFacingError(e, "Could not update this selection"))
+      } finally {
+        setPendingKeys((prev) => {
+          const next = new Set(prev)
+          next.delete(item.key)
+          return next
         })
       }
-      const next = await listCellLines(activeStudy.id)
-      setRows(next)
-      await updateActiveStudy({ primaryCellLine: next[0]?.name ?? "" })
-      handleChanged()
-    } catch (e) {
-      setError(toUserFacingError(e, "Could not update this selection"))
-    } finally {
-      setBusyKey(null)
-    }
-  }
+    },
+    [activeStudy, user, byName, rows, updateActiveStudy, triggerDebouncedChanged]
+  )
 
-  const open = (item: CatalogCellLine) => {
+  const open = useCallback((item: CatalogCellLine) => {
     setViewKey(item.key)
     setMobilePane("detail")
-  }
+  }, [])
 
   return (
     <div className="phyto">
@@ -169,39 +229,21 @@ export function CellLineBrowser({
             ))}
           </div>
           <ul className="phyto-rows">
-            {visible.map((item, index) => {
+            {visible.map((item) => {
               const checked = byName.has(item.name)
               const current = viewing?.key === item.key
-              const meta = [item.tissueOrigin, item.hbvStatus].filter(Boolean).join(" · ")
+              const isBusy = pendingKeys.has(item.key)
               return (
-                <li
+                <CellLineRow
                   key={item.key}
-                  data-viewing={current ? "true" : "false"}
-                  data-selected={checked ? "true" : "false"}
-                  data-tone={item.lineType}
-                  style={{ animationDelay: `${Math.min(index, 10) * 22}ms` }}
-                >
-                  <button type="button" className="phyto-row" onClick={() => open(item)}>
-                    <span className="phyto-row-mark" aria-hidden />
-                    <span className="phyto-row-copy">
-                      <span className="phyto-row-name">{item.name}</span>
-                      <span className="phyto-row-sub">
-                        <span className="phyto-row-class">{item.diseaseContext}</span>
-                        {meta ? <span className="phyto-row-meta">{meta}</span> : null}
-                      </span>
-                    </span>
-                  </button>
-                  <label className="phyto-check">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      disabled={loading || busyKey != null}
-                      aria-label={checked ? `Remove ${item.name} from this study` : `Select ${item.name} for this study`}
-                      onChange={() => void toggle(item)}
-                    />
-                    <span aria-hidden />
-                  </label>
-                </li>
+                  item={item}
+                  checked={checked}
+                  viewing={current}
+                  busy={isBusy}
+                  disabled={loading}
+                  onOpen={open}
+                  onToggle={toggle}
+                />
               )
             })}
           </ul>
@@ -250,7 +292,7 @@ export function CellLineBrowser({
                 type="button"
                 className="phyto-select"
                 data-on={byName.has(viewing.name) ? "true" : "false"}
-                disabled={busyKey != null}
+                disabled={loading || pendingKeys.has(viewing.key)}
                 onClick={() => void toggle(viewing)}
               >
                 {byName.has(viewing.name) ? (
@@ -412,3 +454,53 @@ function Fact({ label, value }: { label: string; value?: string }) {
     </div>
   )
 }
+
+interface CellLineRowProps {
+  item: CatalogCellLine
+  checked: boolean
+  viewing: boolean
+  busy: boolean
+  disabled: boolean
+  onOpen: (item: CatalogCellLine) => void
+  onToggle: (item: CatalogCellLine) => void
+}
+
+const CellLineRow = React.memo(function CellLineRow({
+  item,
+  checked,
+  viewing,
+  busy,
+  disabled,
+  onOpen,
+  onToggle,
+}: CellLineRowProps) {
+  const meta = [item.tissueOrigin, item.hbvStatus].filter(Boolean).join(" · ")
+  return (
+    <li
+      data-viewing={viewing ? "true" : "false"}
+      data-selected={checked ? "true" : "false"}
+      data-tone={item.lineType}
+    >
+      <button type="button" className="phyto-row" onClick={() => onOpen(item)}>
+        <span className="phyto-row-mark" aria-hidden />
+        <span className="phyto-row-copy">
+          <span className="phyto-row-name">{item.name}</span>
+          <span className="phyto-row-sub">
+            <span className="phyto-row-class">{item.diseaseContext}</span>
+            {meta ? <span className="phyto-row-meta">{meta}</span> : null}
+          </span>
+        </span>
+      </button>
+      <label className="phyto-check">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled || busy}
+          aria-label={checked ? `Remove ${item.name} from this study` : `Select ${item.name} for this study`}
+          onChange={() => onToggle(item)}
+        />
+        <span aria-hidden />
+      </label>
+    </li>
+  )
+})

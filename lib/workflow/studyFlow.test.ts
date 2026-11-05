@@ -73,17 +73,25 @@ describe("guided continue requirements", () => {
     ])
   })
 
-  it("requires each selected phytochemical to be reviewed before docking", () => {
+  it("requires at least one selected phytochemical to be reviewed before docking", () => {
     assert.deepEqual(continueRequirements("insilico", emptyReadiness({ proteins: 1 })), [
       "Select at least one phytochemical before continuing to Molecular Docking.",
     ])
     assert.deepEqual(
-      continueRequirements("insilico", emptyReadiness({ compounds: 2, screenedCompounds: 1, proteins: 1 })),
-      ["Complete PubChem, drug-likeness, and ADME screening for each selected phytochemical before continuing to Molecular Docking."],
+      continueRequirements("insilico", emptyReadiness({ compounds: 2, screenedCompounds: 0, proteins: 1 })),
+      ["Complete PubChem, drug-likeness, and ADME screening for at least one selected phytochemical before continuing to Molecular Docking."],
     )
     assert.deepEqual(
       continueRequirements("insilico", emptyReadiness({ compounds: 2, screenedCompounds: 2, proteins: 1 })),
       [],
+    )
+    assert.deepEqual(
+      continueRequirements("insilico", emptyReadiness({ compounds: 2, screenedCompounds: 1, proteins: 1 })),
+      [],
+    )
+    assert.equal(
+      continueAdvisory("insilico", emptyReadiness({ compounds: 2, screenedCompounds: 1 })),
+      "1 of 2 phytochemicals completed screening. The remaining 1 compound is pending or excluded from Molecular Docking.",
     )
   })
 
@@ -193,7 +201,7 @@ describe("record-backed step status", () => {
     assert.equal(stepRecordStatus("insilico", setupRecords), "incomplete")
     assert.equal(stepRecordStatus("insilico", emptyReadiness({ admetRuns: 1 })), "incomplete")
     assert.equal(
-      stepRecordStatus("insilico", emptyReadiness({ compounds: 2, screenedCompounds: 2 })),
+      stepRecordStatus("insilico", emptyReadiness({ compounds: 2, screenedCompounds: 2, proteins: 1 })),
       "complete",
     )
   })

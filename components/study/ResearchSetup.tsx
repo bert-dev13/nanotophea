@@ -149,7 +149,6 @@ export function ResearchSetup({
                   key={section.id}
                   data-on={on ? "true" : "false"}
                   data-tone={section.id}
-                  style={{ animationDelay: `${90 + index * 70}ms` }}
                 >
                   <Icon size={14} strokeWidth={1.9} />
                 </li>
@@ -192,7 +191,6 @@ export function ResearchSetup({
               data-current={selected ? "true" : undefined}
               data-state={state}
               data-tone={section.id}
-              style={{ animationDelay: `${40 + index * 45}ms` }}
               onClick={() => handleTab(section.id)}
               onKeyDown={(event) => onTabKeyDown(event, index)}
             >

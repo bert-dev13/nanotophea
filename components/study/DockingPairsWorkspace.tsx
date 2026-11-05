@@ -45,7 +45,8 @@ const ProteinViewer3D = dynamic(
   { ssr: false, loading: () => <div className="h-[320px] flex items-center justify-center text-xs text-slate-400">Loading 3D structure…</div> }
 )
 import { listCompounds, listProteins } from "@/lib/repositories/researchDataRepository"
-import { getDockingRun, listDockingOutcomes, reopenDockingPair, skipDockingPair } from "@/lib/repositories/scientificRunRepository"
+import { getDockingRun, listAdmetRuns, listDockingOutcomes, reopenDockingPair, skipDockingPair } from "@/lib/repositories/scientificRunRepository"
+import { screenedCompoundIds } from "@/lib/adme/service"
 import { DOCKING_FAILED, DOCKING_SERVICE_UNAVAILABLE, researcherDockingError } from "@/services/docking/types"
 
 export interface DockingPairView {
@@ -105,6 +106,7 @@ export function DockingPairsWorkspace({
   const { user, loading: authLoading } = useAuth()
   const { activeStudy, loading: studyLoading } = useStudy()
   const [compounds, setCompounds] = useState<Compound[]>([])
+  const [excludedCompounds, setExcludedCompounds] = useState<Compound[]>([])
   const [proteins, setProteins] = useState<Protein[]>([])
   const [runs, setRuns] = useState<DockingRun[]>([])
   const [runsByPair, setRunsByPair] = useState<Record<string, DockingRun[]>>({})
@@ -125,7 +127,7 @@ export function DockingPairsWorkspace({
     if (authLoading || studyLoading || !user || !activeStudy) return
     setError(null)
     try {
-      const [compoundRows, proteinRows, outcomes] = await Promise.all([
+      const [compoundRows, proteinRows, outcomes, admetRuns] = await Promise.all([
         listCompounds(activeStudy.id),
         listProteins(activeStudy.id),
         listDockingOutcomes(activeStudy.id).catch((err) => {
@@ -138,8 +140,13 @@ export function DockingPairsWorkspace({
             pairs: [],
           }
         }),
+        listAdmetRuns(activeStudy.id).catch(() => [] as any),
       ])
-      setCompounds(compoundRows)
+      const readyIds = new Set(screenedCompoundIds(compoundRows.map((c) => c.id), admetRuns))
+      const eligible = compoundRows.filter((c) => readyIds.has(c.id))
+      const omitted = compoundRows.filter((c) => !readyIds.has(c.id))
+      setCompounds(eligible.length > 0 ? eligible : compoundRows)
+      setExcludedCompounds(eligible.length > 0 ? omitted : [])
       setProteins(proteinRows)
       setRuns(outcomes.completed)
       setRunsByPair(outcomes.runsByPair || {})
@@ -412,6 +419,44 @@ export function DockingPairsWorkspace({
         </div>
       ) : (
         <div className="phyto">
+          {excludedCompounds.length > 0 ? (
+            <div
+              style={{
+                background: "rgba(59, 130, 246, 0.08)",
+                border: "1px solid rgba(59, 130, 246, 0.25)",
+                borderRadius: "8px",
+                padding: "8px 12px",
+                marginBottom: "0.75rem",
+                fontSize: "12px",
+                color: "#93c5fd",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "8px",
+              }}
+            >
+              <span>
+                Carrying forward <strong>{compounds.length}</strong> docking-ready phytochemical{compounds.length > 1 ? "s" : ""}.
+                {" "}{excludedCompounds.length} compound{excludedCompounds.length > 1 ? "s are" : " is"} excluded ({excludedCompounds.map((c) => c.name).join(", ")}) because screening is pending or incomplete.
+              </span>
+              <button
+                type="button"
+                onClick={handleBack}
+                style={{
+                  background: "transparent",
+                  border: "1px solid rgba(147, 197, 253, 0.4)",
+                  color: "#93c5fd",
+                  borderRadius: "4px",
+                  padding: "2px 8px",
+                  fontSize: "11px",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                In-Silico Screening
+              </button>
+            </div>
+          ) : null}
           <div className="phyto-workspace" data-pane={mobilePane}>
             {/* LEFT LIBRARY: Matching PhytochemicalBrowser & ProteinBrowser */}
             <aside className="phyto-library">
@@ -524,7 +569,6 @@ export function DockingPairsWorkspace({
                       data-viewing={current ? "true" : "false"}
                       data-selected={isDone ? "true" : "false"}
                       data-tone={pair.protein.pathway || "signaling"}
-                      style={{ animationDelay: `${Math.min(index, 10) * 22}ms` }}
                     >
                       <button
                         type="button"

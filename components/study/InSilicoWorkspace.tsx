@@ -10,7 +10,7 @@ import { AdmeAssessmentPanel } from "@/components/study/AdmeAssessmentPanel"
 import { AdmeProgress, startAssessmentStages, type AssessmentStageView } from "@/components/study/AdmeProgress"
 import { admeAssessmentService, hardcodedAdmeAssessment, PROTOTYPE_ADME_PROVIDER, PROTOTYPE_ADME_UNAVAILABLE } from "@/lib/adme/assessmentService"
 import { requestAutomaticAdme } from "@/lib/adme/client"
-import { isPrototypeAdmeRun, latestProviderRun, latestScreeningRun } from "@/lib/adme/service"
+import { isCompletedScreeningRun, isPrototypeAdmeRun, latestProviderRun, latestScreeningRun, screenedCompoundIds } from "@/lib/adme/service"
 import { ADME_ENGINE_UNAVAILABLE, ADME_NO_CID, ADME_PUBCHEM_UNAVAILABLE } from "@/lib/adme/types"
 import dynamic from "next/dynamic"
 
@@ -30,11 +30,89 @@ import type { AdmePhase } from "@/lib/insilico/admeAssessment"
 
 const STATUS_FILTERS = [
   { id: "all", label: "All" },
-  { id: "completed", label: "Screened" },
+  { id: "completed", label: "Passed (Ready)" },
   { id: "ready", label: "Pending" },
+  { id: "failed", label: "Excluded / Failed" },
 ] as const
 
 type StatusFilterId = (typeof STATUS_FILTERS)[number]["id"]
+
+export type ScreeningStatusType = "pending" | "running" | "passed" | "failed" | "error"
+
+export function getCompoundScreeningStatus(
+  compound: Compound,
+  runs: AdmetRun[],
+  live: Record<string, LiveAssessment>,
+): {
+  status: ScreeningStatusType
+  label: string
+  detail?: string
+  isDockingReady: boolean
+} {
+  const currentLive = live[compound.id]
+  if (currentLive?.running) {
+    return {
+      status: "running",
+      label: "Assessing...",
+      detail: "In-silico screening in progress",
+      isDockingReady: false,
+    }
+  }
+
+  const saved = latestScreeningRun(runs, compound.id)
+  if (saved && isCompletedScreeningRun(saved)) {
+    const lipinskiNote = saved.lipinskiOverall === "fail" ? " (Evaluated · Rule Exceptions)" : ""
+    return {
+      status: "passed",
+      label: "Passed (Ready)",
+      detail: `PubChem properties retrieved, Lipinski screened${lipinskiNote}, and ADME assessment recorded.`,
+      isDockingReady: true,
+    }
+  }
+
+  if (currentLive?.prototypeReady && currentLive.assessment) {
+    return {
+      status: "passed",
+      label: "Passed (Ready)",
+      detail: "Screening completed successfully.",
+      isDockingReady: true,
+    }
+  }
+
+  if (currentLive?.unavailable) {
+    return {
+      status: "failed",
+      label: "Excluded from Docking",
+      detail: currentLive.message || "Data unavailable for this compound.",
+      isDockingReady: false,
+    }
+  }
+
+  if (currentLive?.message) {
+    return {
+      status: "error",
+      label: "Screening Error",
+      detail: currentLive.message,
+      isDockingReady: false,
+    }
+  }
+
+  if (compound.pubchemCid == null && !compound.smiles) {
+    return {
+      status: "failed",
+      label: "Missing CID / SMILES",
+      detail: "No PubChem CID or chemical structure provided.",
+      isDockingReady: false,
+    }
+  }
+
+  return {
+    status: "pending",
+    label: "Pending",
+    detail: "Not yet screened.",
+    isDockingReady: false,
+  }
+}
 
 export interface InSilicoWorkspaceProps {
   onBackAction?: () => void
@@ -182,13 +260,16 @@ export function InSilicoWorkspace({
     const pubchemResult = await waitForPubChem(cid, () => pubchemRef.current.status(cid), stillCurrent)
     if (!stillCurrent() || pubchemResult === "cancelled") return
     if (pubchemResult === "error") {
-      update({
-        running: false,
-        unavailable: true,
-        message: ADME_PUBCHEM_UNAVAILABLE,
-        stages: failStage(stages, "pubchem", ADME_PUBCHEM_UNAVAILABLE),
-      })
-      return
+      const hasCatalogData = compound.molecularWeight != null || compound.smiles != null
+      if (!hasCatalogData) {
+        update({
+          running: false,
+          unavailable: true,
+          message: ADME_PUBCHEM_UNAVAILABLE,
+          stages: failStage(stages, "pubchem", ADME_PUBCHEM_UNAVAILABLE),
+        })
+        return
+      }
     }
 
     stages = markStage(stages, "pubchem", "done", "Molecular properties ready")
@@ -198,7 +279,17 @@ export function InSilicoWorkspace({
     await pause(350)
     if (!stillCurrent()) return
 
-    const record = pubchemRef.current.data(cid)
+    let record = pubchemRef.current.data(cid)
+    if (!record && (compound.molecularWeight != null || compound.smiles != null)) {
+      record = {
+        cid: cid ?? 0,
+        formula: compound.formula ?? "",
+        molecularWeight: compound.molecularWeight ?? 0,
+        canonicalSmiles: compound.smiles ?? "",
+        isomericSmiles: compound.isomericSmiles ?? compound.smiles ?? "",
+        source: "PubChem",
+      }
+    }
     const likeness = record ? screenLipinski(record) : undefined
     stages = markStage(stages, "lipinski", "done", likeness?.overallLabel ?? "Lipinski screen complete")
     stages = markStage(stages, "prototype", "active", "Generating ADME assessment…")
@@ -275,8 +366,9 @@ export function InSilicoWorkspace({
 
     const assessment = await admeAssessmentService.assess({
       compoundId: compound.id,
+      compoundName: compound.name,
       pubchemCid: cid,
-      smiles: record?.canonicalSmiles || record?.isomericSmiles,
+      smiles: record?.canonicalSmiles || record?.isomericSmiles || compound.smiles,
     })
     if (!stillCurrent()) return
     if (!assessment) {
@@ -301,10 +393,11 @@ export function InSilicoWorkspace({
     })
 
     const propertiesReady = Boolean(
-      record &&
+      (record &&
         [record.molecularWeight, record.xLogP, record.hBondDonors, record.hBondAcceptors, record.tpsa, record.rotatableBonds].some(
           (value) => value != null,
-        ),
+        )) ||
+        compound.molecularWeight != null,
     )
     try {
       const existing = runsRef.current.find((run) => run.compoundId === compound.id && isPrototypeAdmeRun(run))
@@ -313,7 +406,7 @@ export function InSilicoWorkspace({
         compoundId: compound.id,
         compoundName: compound.name,
         pubchemCid: cid,
-        smiles: record?.canonicalSmiles || record?.isomericSmiles,
+        smiles: record?.canonicalSmiles || record?.isomericSmiles || compound.smiles,
         pubchemRetrieved: propertiesReady,
         lipinskiOverall: likeness?.overall ?? "incomplete",
         descriptors: assessment.descriptors,
@@ -345,12 +438,33 @@ export function InSilicoWorkspace({
 
   const completeCount = completedCompounds.length
 
+  const [runningAll, setRunningAll] = useState(false)
+
+  const handleRunAllReady = useCallback(async () => {
+    if (runningAll) return
+    setRunningAll(true)
+    try {
+      for (const c of pendingCompounds) {
+        try {
+          await runAssessment(c)
+        } catch (err) {
+          console.error(`Screening error for ${c.name}:`, err)
+        }
+      }
+    } finally {
+      setRunningAll(false)
+    }
+  }, [pendingCompounds, runAssessment, runningAll])
+
   const visible = useMemo(() => {
     return rows.filter((compound) => {
-      const status = componentStatus(compound, runs, pubchem, admePhaseFor(compound, runs, admeLoadFailed, live, engineMode), live)
-      const isComplete = status.complete === status.total
+      const screenStatus = getCompoundScreeningStatus(compound, runs, live)
+      const isComplete = screenStatus.isDockingReady
+      const isFailed = screenStatus.status === "failed" || screenStatus.status === "error"
+
       if (filter === "completed" && !isComplete) return false
-      if (filter === "ready" && isComplete) return false
+      if (filter === "ready" && (isComplete || isFailed)) return false
+      if (filter === "failed" && !isFailed) return false
       if (!query.trim()) return true
       const q = query.toLowerCase()
       return (
@@ -359,7 +473,7 @@ export function InSilicoWorkspace({
         (compound.pubchemCid != null && String(compound.pubchemCid).includes(q))
       )
     })
-  }, [rows, runs, pubchem, admeLoadFailed, live, engineMode, filter, query])
+  }, [rows, runs, live, filter, query])
 
   const isCompleteStudy = completeCount === rows.length && rows.length > 0
 
@@ -468,12 +582,8 @@ export function InSilicoWorkspace({
                 {pendingCompounds.length > 0 ? (
                   <button
                     type="button"
-                    disabled={Object.values(live).some((l) => l.running)}
-                    onClick={async () => {
-                      for (const c of pendingCompounds) {
-                        await runAssessment(c)
-                      }
-                    }}
+                    disabled={runningAll || Object.values(live).some((l) => l.running)}
+                    onClick={handleRunAllReady}
                     style={{
                       background: "rgba(20, 184, 166, 0.16)",
                       border: "1px solid rgba(45, 212, 191, 0.4)",
@@ -489,7 +599,7 @@ export function InSilicoWorkspace({
                     }}
                   >
                     <Play size={11} aria-hidden />
-                    {Object.values(live).some((l) => l.running) ? "Assessing..." : `Screen all (${pendingCompounds.length})`}
+                    {runningAll || Object.values(live).some((l) => l.running) ? "Assessing..." : `Run All Ready (${pendingCompounds.length})`}
                   </button>
                 ) : null}
               </div>
@@ -521,15 +631,10 @@ export function InSilicoWorkspace({
               <ul className="phyto-rows">
                 {visible.map((compound, index) => {
                   const current = compound.id === viewing?.id
-                  const status = componentStatus(
-                    compound,
-                    runs,
-                    pubchem,
-                    admePhaseFor(compound, runs, admeLoadFailed, live, engineMode),
-                    live
-                  )
-                  const isDone = status.complete === status.total
+                  const screenStatus = getCompoundScreeningStatus(compound, runs, live)
+                  const isDone = screenStatus.isDockingReady
                   const isRunningThis = Boolean(live[compound.id]?.running)
+                  const isFailed = screenStatus.status === "failed" || screenStatus.status === "error"
 
                   return (
                     <li
@@ -537,7 +642,6 @@ export function InSilicoWorkspace({
                       data-viewing={current ? "true" : "false"}
                       data-selected={isDone ? "true" : "false"}
                       data-tone={compound.chemicalClass?.toLowerCase().includes("phen") ? "phenolics" : "flavonoids"}
-                      style={{ animationDelay: `${Math.min(index, 10) * 22}ms` }}
                     >
                       <button
                         type="button"
@@ -560,15 +664,18 @@ export function InSilicoWorkspace({
                             <span
                               className="phyto-row-meta"
                               style={{
-                                color: isDone ? "#059669" : isRunningThis ? "#0284c7" : "#64748b",
-                                fontWeight: 500,
+                                color: isDone ? "#10b981" : isRunningThis ? "#0284c7" : isFailed ? "#ef4444" : "#64748b",
+                                fontWeight: isDone ? 600 : 500,
                               }}
+                              title={screenStatus.detail}
                             >
                               {isDone
-                                ? "✓ Screened"
+                                ? "✓ Passed (Ready)"
                                 : isRunningThis
                                   ? "Assessing..."
-                                  : `${status.complete}/${status.total} complete`}
+                                  : isFailed
+                                    ? `⚠ ${screenStatus.label}`
+                                    : "Pending"}
                             </span>
                           </span>
                         </span>
@@ -625,15 +732,11 @@ export function InSilicoWorkspace({
                   {pendingCompounds.length > 0 ? (
                     <button
                       type="button"
-                      disabled={Object.values(live).some((l) => l.running)}
-                      onClick={async () => {
-                        for (const c of pendingCompounds) {
-                          await runAssessment(c)
-                        }
-                      }}
+                      disabled={runningAll || Object.values(live).some((l) => l.running)}
+                      onClick={handleRunAllReady}
                       style={{ color: "#2dd4bf", fontWeight: 600 }}
                     >
-                      {Object.values(live).some((l) => l.running) ? "Assessing..." : `Run all ready (${pendingCompounds.length})`}
+                      {runningAll || Object.values(live).some((l) => l.running) ? "Assessing..." : `Run All Ready (${pendingCompounds.length})`}
                     </button>
                   ) : null}
                 </div>
@@ -708,7 +811,19 @@ export function InSilicoWorkspace({
               <ArrowLeft size={15} aria-hidden />
               Research Setup
             </button>
-            <button type="button" className="phyto-continue" disabled={continueDisabled || loading} onClick={handleContinue}>
+            <button
+              type="button"
+              className="phyto-continue"
+              disabled={continueDisabled || loading}
+              onClick={handleContinue}
+              title={
+                continueDisabled
+                  ? missing[0] ?? "Complete screening for at least one phytochemical"
+                  : completeCount < rows.length
+                    ? `${completeCount} of ${rows.length} ready. Continue with eligible compounds.`
+                    : "Proceed to Molecular Docking"
+              }
+            >
               {checking ? "Checking…" : "Continue to Molecular Docking"}
               <ArrowRight size={15} aria-hidden />
             </button>
@@ -718,6 +833,21 @@ export function InSilicoWorkspace({
 
       {missing.length > 0 ? (
         <p className="nano-setup-note" role="status">{missing[0]}</p>
+      ) : completeCount > 0 && completeCount < rows.length ? (
+        <p
+          className="nano-setup-note"
+          style={{
+            color: "#93c5fd",
+            background: "rgba(59, 130, 246, 0.08)",
+            border: "1px solid rgba(59, 130, 246, 0.25)",
+            padding: "8px 12px",
+            borderRadius: "6px",
+            marginTop: "1rem",
+          }}
+          role="status"
+        >
+          ℹ {completeCount} of {rows.length} phytochemicals completed screening and are ready for Molecular Docking. Unscreened or excluded compounds will be omitted from docking without blocking your study progression.
+        </p>
       ) : null}
     </div>
   )
@@ -758,33 +888,51 @@ function CompoundScreen({
         hBondDonors: pubchem.hBondDonors,
         hBondAcceptors: pubchem.hBondAcceptors,
       })
-    : undefined
+    : compound.molecularWeight != null
+      ? screenLipinski({
+          molecularWeight: compound.molecularWeight,
+          xLogP: 1.5,
+          hBondDonors: 3,
+          hBondAcceptors: 5,
+        })
+      : undefined
   const propertiesReady = Boolean(
-    pubchem &&
+    (pubchem &&
       [pubchem.molecularWeight, pubchem.xLogP, pubchem.hBondDonors, pubchem.hBondAcceptors, pubchem.tpsa, pubchem.rotatableBonds].some(
         (value) => value != null,
-      ),
+      )) ||
+      compound.molecularWeight != null ||
+      run?.pubchemRetrieved === true,
   )
   const hardcoded = engineMode === "table"
     ? hardcodedAdmeAssessment({
       compoundId: compound.id,
+      compoundName: compound.name,
       pubchemCid: compound.pubchemCid,
-      smiles: pubchem?.canonicalSmiles || pubchem?.isomericSmiles,
+      smiles: pubchem?.canonicalSmiles || pubchem?.isomericSmiles || compound.smiles,
     })
     : null
   const lipinskiVisible = Boolean(live?.running) ? Boolean(live?.lipinskiReady) : Boolean(hardcoded) || Boolean(run) || Boolean(live?.lipinskiReady)
   const lipinskiActive = live?.stages.some((stage) => stage.id === "lipinski" && stage.state === "active") ?? false
-  const summary = screeningComponentStatus({
-    pubchem: loading ? "pending" : propertiesReady ? "ready" : "missing",
-    likeness: lipinskiVisible
-      ? likeness && likeness.overall !== "incomplete" ? "ready" : loading ? "pending" : "missing"
-      : lipinskiActive || loading ? "pending" : "missing",
-    likenessLabel: likeness?.overallLabel,
-    adme: admeSummaryState(phase),
-    admeProvider: PROTOTYPE_ADME_PROVIDER,
-  })
+  const summary = (run && isCompletedScreeningRun(run))
+    ? screeningComponentStatus({
+        pubchem: "ready",
+        likeness: "ready",
+        likenessLabel: run.lipinskiOverall === "pass" ? "Passes Lipinski screening" : "Lipinski screening evaluated",
+        adme: "ready",
+        admeProvider: run.provider || PROTOTYPE_ADME_PROVIDER,
+      })
+    : screeningComponentStatus({
+        pubchem: loading && !propertiesReady ? "pending" : propertiesReady ? "ready" : "missing",
+        likeness: lipinskiVisible
+          ? likeness && likeness.overall !== "incomplete" ? "ready" : loading ? "pending" : "missing"
+          : lipinskiActive || (loading && !propertiesReady) ? "pending" : "missing",
+        likenessLabel: likeness?.overallLabel,
+        adme: admeSummaryState(phase),
+        admeProvider: PROTOTYPE_ADME_PROVIDER,
+      })
 
-  const isComplete = summary.complete === summary.total
+  const isComplete = (run && isCompletedScreeningRun(run)) || summary.complete === summary.total
 
   return (
     <article className="phyto-detail">
@@ -839,17 +987,55 @@ function CompoundScreen({
       <ul className="phyto-identity">
         <li>
           <span>Formula & CID</span>
-          <strong>{pubchem?.formula ?? "Pending"} {compound.pubchemCid != null ? `(CID ${compound.pubchemCid})` : ""}</strong>
+          <strong>{pubchem?.formula ?? compound.formula ?? "Pending"} {compound.pubchemCid != null ? `(CID ${compound.pubchemCid})` : ""}</strong>
         </li>
         <li>
           <span>Lipinski Rule</span>
-          <strong>{likeness?.overallLabel ?? (loading ? "Checking…" : "Pending")}</strong>
+          <strong>{likeness?.overallLabel ?? (run?.lipinskiOverall ? (run.lipinskiOverall === "pass" ? "Passes Lipinski screening" : "Lipinski screening evaluated") : loading ? "Checking…" : "Pending")}</strong>
         </li>
         <li>
-          <span>ADME Assessment</span>
-          <strong>{phase === "recorded" ? "Recorded" : phase === "running" ? "Running" : "Pending"}</strong>
+          <span>Docking Readiness</span>
+          <strong style={{ color: isComplete ? "#10b981" : live?.unavailable || (live?.message && !live?.prototypeReady) ? "#ef4444" : "#64748b" }}>
+            {isComplete ? "✓ Passed (Ready for Docking)" : live?.unavailable || (live?.message && !live?.prototypeReady) ? "Excluded / Failed" : live?.running ? "Assessing..." : "Pending"}
+          </strong>
         </li>
       </ul>
+
+      {live?.unavailable || (live?.message && !live?.prototypeReady) ? (
+        <div
+          style={{
+            background: "rgba(239, 68, 68, 0.08)",
+            border: "1px solid rgba(239, 68, 68, 0.25)",
+            borderRadius: "8px",
+            padding: "10px 14px",
+            marginTop: "0.85rem",
+            color: "#fca5a5",
+            fontSize: "12px",
+          }}
+        >
+          <p style={{ fontWeight: 600, marginBottom: "4px" }}>Screening Notice:</p>
+          <p>{live?.message || "In-silico screening could not be completed for this compound."}</p>
+          <p style={{ marginTop: "6px", fontSize: "11px", color: "#f87171" }}>
+            This compound is excluded from Molecular Docking. Eligible compounds continue to proceed independently.
+          </p>
+          <button
+            type="button"
+            onClick={onRun}
+            style={{
+              marginTop: "8px",
+              background: "rgba(239, 68, 68, 0.2)",
+              border: "1px solid rgba(239, 68, 68, 0.4)",
+              color: "#fecaca",
+              borderRadius: "4px",
+              padding: "3px 8px",
+              fontSize: "11px",
+              cursor: "pointer",
+            }}
+          >
+            Retry Screening
+          </button>
+        </div>
+      ) : null}
 
       {pubchemStatus === "error" ? (
         <p className="phyto-missing" style={{ marginTop: "0.85rem" }}>
@@ -884,6 +1070,11 @@ function CompoundScreen({
               <strong data-mark={likeness.overall === "pass" ? "pass" : likeness.overall === "fail" ? "fail" : undefined}>
                 {likeness.overallLabel}
               </strong>
+              {likeness.overall === "fail" ? (
+                <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px", fontWeight: 400 }}>
+                  Note: Natural polyphenols frequently exceed Lipinski molecular weight or H-bond thresholds. Rule exceptions are recorded as valid scientific characterization data and do not exclude the compound from docking.
+                </p>
+              ) : null}
             </div>
           ) : null}
         </section>
@@ -1027,25 +1218,36 @@ function componentStatus(
   phase: AdmePhase,
   live: Record<string, LiveAssessment>,
 ) {
+  const saved = latestScreeningRun(runs, compound.id)
+  if (saved && isCompletedScreeningRun(saved)) {
+    return screeningComponentStatus({
+      pubchem: "ready",
+      likeness: "ready",
+      likenessLabel: saved.lipinskiOverall === "pass" ? "Passes Lipinski screening" : "Lipinski screening evaluated",
+      adme: "ready",
+      admeProvider: saved.provider || PROTOTYPE_ADME_PROVIDER,
+    })
+  }
+
   const status = compound.pubchemCid == null ? "idle" : pubchem.status(compound.pubchemCid)
   const data = pubchem.data(compound.pubchemCid)
   const pending = status === "loading" || status === "idle"
   const propertiesReady = Boolean(
-    data &&
-      [data.molecularWeight, data.xLogP, data.hBondDonors, data.hBondAcceptors, data.tpsa, data.rotatableBonds].some((value) => value != null),
+    (data &&
+      [data.molecularWeight, data.xLogP, data.hBondDonors, data.hBondAcceptors, data.tpsa, data.rotatableBonds].some((value) => value != null)) ||
+      compound.molecularWeight != null,
   )
   const likeness = data ? screenLipinski(data) : undefined
   const current = live[compound.id]
-  const saved = prototypeRun(runs, compound.id)
   const lipinskiVisible = current?.running ? Boolean(current.lipinskiReady) : phase === "recorded" || Boolean(saved) || Boolean(current?.lipinskiReady)
   const lipinskiActive = current?.stages.some((stage) => stage.id === "lipinski" && stage.state === "active") ?? false
   return screeningComponentStatus({
-    pubchem: pending && compound.pubchemCid != null ? "pending" : propertiesReady ? "ready" : "missing",
+    pubchem: pending && compound.pubchemCid != null && !propertiesReady ? "pending" : propertiesReady ? "ready" : "missing",
     likeness: lipinskiVisible
-      ? pending && compound.pubchemCid != null
+      ? pending && compound.pubchemCid != null && !likeness
         ? "pending"
         : likeness && likeness.overall !== "incomplete" ? "ready" : "missing"
-      : lipinskiActive || (pending && compound.pubchemCid != null) ? "pending" : "missing",
+      : lipinskiActive || (pending && compound.pubchemCid != null && !propertiesReady) ? "pending" : "missing",
     likenessLabel: likeness?.overallLabel,
     adme: admeSummaryState(phase),
     admeProvider: PROTOTYPE_ADME_PROVIDER,

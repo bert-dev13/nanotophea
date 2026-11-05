@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ArrowLeft, ArrowRight, Atom, Check, ExternalLink, Plus, Search, X } from "lucide-react"
 import { useAuth } from "@/components/providers/AuthProvider"
 import { useStudy } from "@/components/providers/StudyProvider"
@@ -57,7 +57,7 @@ export function ProteinBrowser({
   const { activeStudy, updateActiveStudy } = useStudy()
   const [rows, setRows] = useState<Protein[]>([])
   const [loading, setLoading] = useState(true)
-  const [busyKey, setBusyKey] = useState<string | null>(null)
+  const [pendingKeys, setPendingKeys] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("all")
@@ -66,6 +66,20 @@ export function ProteinBrowser({
   const [showSelected, setShowSelected] = useState(false)
   const [confirmLeave, setConfirmLeave] = useState(false)
   const [savingAck, setSavingAck] = useState(false)
+  const changeDebounceTimer = useRef<NodeJS.Timeout | null>(null)
+
+  const triggerDebouncedChanged = useCallback(() => {
+    if (changeDebounceTimer.current) clearTimeout(changeDebounceTimer.current)
+    changeDebounceTimer.current = setTimeout(() => {
+      handleChanged()
+    }, 300)
+  }, [handleChanged])
+
+  useEffect(() => {
+    return () => {
+      if (changeDebounceTimer.current) clearTimeout(changeDebounceTimer.current)
+    }
+  }, [])
 
   const load = useCallback(async () => {
     if (!activeStudy) return
@@ -142,33 +156,86 @@ export function ProteinBrowser({
     }
   }
 
-  const toggle = async (item: CatalogProtein) => {
-    if (!activeStudy || !user || busyKey) return
-    const matches = rows.filter((r) => r.name.toLowerCase() === item.name.toLowerCase() || (item.pdbId && r.pdbId?.toUpperCase() === item.pdbId.toUpperCase()))
-    setBusyKey(item.key)
-    setError(null)
-    try {
-      if (matches.length > 0) {
-        for (const existing of matches) {
-          await deleteProtein(activeStudy.id, existing.id, { id: user.uid })
-        }
-      } else {
-        await createProtein(activeStudy.id, { id: user.uid }, catalogProteinInput(item))
-      }
-      setRows(await listProteins(activeStudy.id))
-      handleChanged()
-    } catch (e) {
-      console.error("[ProteinBrowser] error toggling protein:", e)
-      setError(toUserFacingError(e, "Could not update this selection"))
-    } finally {
-      setBusyKey(null)
-    }
-  }
+  const toggle = useCallback(
+    async (item: CatalogProtein) => {
+      if (!activeStudy || !user) return
+      const matches = rows.filter(
+        (r) =>
+          r.name.toLowerCase() === item.name.toLowerCase() ||
+          (item.pdbId && r.pdbId?.toUpperCase() === item.pdbId.toUpperCase())
+      )
+      const prevRows = rows
+      setError(null)
+      setPendingKeys((prev) => {
+        const next = new Set(prev)
+        next.add(item.key)
+        return next
+      })
 
-  const open = (item: CatalogProtein) => {
+      // Instant optimistic update
+      if (matches.length > 0) {
+        setRows((prev) =>
+          prev.filter(
+            (r) =>
+              r.name.toLowerCase() !== item.name.toLowerCase() &&
+              (!item.pdbId || r.pdbId?.toUpperCase() !== item.pdbId.toUpperCase())
+          )
+        )
+      } else {
+        const input = catalogProteinInput(item)
+        const optimistic: Protein = {
+          ...input,
+          id: `temp-${item.key}-${Date.now()}`,
+          studyId: activeStudy.id,
+          referenceIds: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          createdBy: user.uid,
+          updatedBy: user.uid,
+          provenance: {
+            evidenceClass: "REFERENCE",
+            source: item.pdbId ? "RCSB PDB" : "Catalog",
+          },
+        }
+        setRows((prev) => [...prev, optimistic])
+      }
+
+      try {
+        if (matches.length > 0) {
+          for (const existing of matches) {
+            await deleteProtein(activeStudy.id, existing.id, { id: user.uid })
+          }
+        } else {
+          const created = await createProtein(activeStudy.id, { id: user.uid }, catalogProteinInput(item))
+          setRows((prev) =>
+            prev.map((r) =>
+              r.name.toLowerCase() === item.name.toLowerCase() ||
+              (item.pdbId && r.pdbId?.toUpperCase() === item.pdbId.toUpperCase())
+                ? created
+                : r
+            )
+          )
+        }
+        triggerDebouncedChanged()
+      } catch (e) {
+        console.error("[ProteinBrowser] error toggling protein:", e)
+        setRows(prevRows)
+        setError(toUserFacingError(e, "Could not update this selection"))
+      } finally {
+        setPendingKeys((prev) => {
+          const next = new Set(prev)
+          next.delete(item.key)
+          return next
+        })
+      }
+    },
+    [activeStudy, user, rows, triggerDebouncedChanged]
+  )
+
+  const open = useCallback((item: CatalogProtein) => {
     setViewKey(item.key)
     setMobilePane("detail")
-  }
+  }, [])
 
   return (
     <div className="phyto">
@@ -213,103 +280,21 @@ export function ProteinBrowser({
             ))}
           </div>
           <ul className="phyto-rows">
-            {visible.map((item, index) => {
+            {visible.map((item) => {
               const checked = byName.has(item.name)
               const current = viewing?.key === item.key
+              const isBusy = pendingKeys.has(item.key)
               return (
-                <li
+                <ProteinRow
                   key={item.key}
-                  data-viewing={current ? "true" : "false"}
-                  data-selected={checked ? "true" : "false"}
-                  data-tone={item.group}
-                  style={{ animationDelay: `${Math.min(index, 10) * 22}ms` }}
-                >
-                  <button type="button" className="phyto-row" onClick={() => open(item)}>
-                    <span className="phyto-row-mark" aria-hidden />
-                    <span className="phyto-row-copy">
-                      <span className="phyto-row-name">{item.key === "ccnd1" ? "Cyclin D1 / CDK" : item.name}</span>
-                      <span className="phyto-row-sub">
-                        <span className="phyto-row-class">{item.pathway}</span>
-                        <span className="phyto-row-meta">{item.key === "lats1" ? "AlphaFold DB" : item.pdbId ? `PDB ${item.pdbId}` : "No PDB"}</span>
-                        <span className="phyto-row-meta" style={{ color: "#059669", fontWeight: 500 }}>
-                          ✓ AutoDock Vina ready
-                        </span>
-                        {item.key === "lats1" ? (
-                          <span
-                            className="phyto-row-meta"
-                            style={{
-                              fontSize: "11px",
-                              padding: "1px 6px",
-                              borderRadius: "4px",
-                              backgroundColor: "rgba(147, 51, 234, 0.12)",
-                              color: "#7e22ce",
-                              fontWeight: 600,
-                            }}
-                            title="Predicted structure from AlphaFold DB (v4) of human LATS1 kinase domain (residues 705–1010)"
-                          >
-                            Predicted structure
-                          </span>
-                        ) : item.key === "ccnd1" ? (
-                          <>
-                            <span
-                              className="phyto-row-meta"
-                              style={{
-                                fontSize: "11px",
-                                padding: "1px 6px",
-                                borderRadius: "4px",
-                                backgroundColor: "rgba(37, 99, 235, 0.1)",
-                                color: "#2563eb",
-                                fontWeight: 600,
-                              }}
-                              title="Experimental crystal structure from RCSB PDB"
-                            >
-                              Experimental structure
-                            </span>
-                            <span
-                              className="phyto-row-meta"
-                              style={{
-                                fontSize: "11px",
-                                padding: "1px 6px",
-                                borderRadius: "4px",
-                                backgroundColor: "rgba(13, 148, 136, 0.12)",
-                                color: "#0f766e",
-                                fontWeight: 600,
-                              }}
-                              title="Docking targets the druggable CDK partner (CDK6, PDB 5L2I) in the Cyclin D1–CDK cell-cycle signaling complex"
-                            >
-                              CDK receptor
-                            </span>
-                          </>
-                        ) : (
-                          <span
-                            className="phyto-row-meta"
-                            style={{
-                              fontSize: "11px",
-                              padding: "1px 6px",
-                              borderRadius: "4px",
-                              backgroundColor: "rgba(37, 99, 235, 0.1)",
-                              color: "#2563eb",
-                              fontWeight: 600,
-                            }}
-                            title="Experimental crystal structure from RCSB PDB"
-                          >
-                            Experimental structure
-                          </span>
-                        )}
-                      </span>
-                    </span>
-                  </button>
-                  <label className="phyto-check">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      disabled={loading || busyKey != null}
-                      aria-label={checked ? `Remove ${item.name} from this study` : `Select ${item.name} for this study`}
-                      onChange={() => void toggle(item)}
-                    />
-                    <span aria-hidden />
-                  </label>
-                </li>
+                  item={item}
+                  checked={checked}
+                  viewing={current}
+                  busy={isBusy}
+                  disabled={loading}
+                  onOpen={open}
+                  onToggle={toggle}
+                />
               )
             })}
           </ul>
@@ -358,7 +343,7 @@ export function ProteinBrowser({
                 type="button"
                 className="phyto-select"
                 data-on={byName.has(viewing.name) ? "true" : "false"}
-                disabled={busyKey != null}
+                disabled={loading || pendingKeys.has(viewing.key)}
                 onClick={() => void toggle(viewing)}
               >
                 {byName.has(viewing.name) ? <><Check size={14} aria-hidden />Selected</> : <><Plus size={14} aria-hidden />Select for Study</>}
@@ -626,3 +611,117 @@ function Prop({ label, value }: { label: string; value?: string }) {
     </div>
   )
 }
+
+interface ProteinRowProps {
+  item: CatalogProtein
+  checked: boolean
+  viewing: boolean
+  busy: boolean
+  disabled: boolean
+  onOpen: (item: CatalogProtein) => void
+  onToggle: (item: CatalogProtein) => void
+}
+
+const ProteinRow = React.memo(function ProteinRow({
+  item,
+  checked,
+  viewing,
+  busy,
+  disabled,
+  onOpen,
+  onToggle,
+}: ProteinRowProps) {
+  return (
+    <li
+      data-viewing={viewing ? "true" : "false"}
+      data-selected={checked ? "true" : "false"}
+      data-tone={item.group}
+    >
+      <button type="button" className="phyto-row" onClick={() => onOpen(item)}>
+        <span className="phyto-row-mark" aria-hidden />
+        <span className="phyto-row-copy">
+          <span className="phyto-row-name">{item.key === "ccnd1" ? "Cyclin D1 / CDK" : item.name}</span>
+          <span className="phyto-row-sub">
+            <span className="phyto-row-class">{item.pathway}</span>
+            <span className="phyto-row-meta">{item.key === "lats1" ? "AlphaFold DB" : item.pdbId ? `PDB ${item.pdbId}` : "No PDB"}</span>
+            <span className="phyto-row-meta" style={{ color: "#059669", fontWeight: 500 }}>
+              ✓ AutoDock Vina ready
+            </span>
+            {item.key === "lats1" ? (
+              <span
+                className="phyto-row-meta"
+                style={{
+                  fontSize: "11px",
+                  padding: "1px 6px",
+                  borderRadius: "4px",
+                  backgroundColor: "rgba(147, 51, 234, 0.12)",
+                  color: "#7e22ce",
+                  fontWeight: 600,
+                }}
+                title="Predicted structure from AlphaFold DB (v4) of human LATS1 kinase domain (residues 705–1010)"
+              >
+                Predicted structure
+              </span>
+            ) : item.key === "ccnd1" ? (
+              <>
+                <span
+                  className="phyto-row-meta"
+                  style={{
+                    fontSize: "11px",
+                    padding: "1px 6px",
+                    borderRadius: "4px",
+                    backgroundColor: "rgba(37, 99, 235, 0.1)",
+                    color: "#2563eb",
+                    fontWeight: 600,
+                  }}
+                  title="Experimental crystal structure from RCSB PDB"
+                >
+                  Experimental structure
+                </span>
+                <span
+                  className="phyto-row-meta"
+                  style={{
+                    fontSize: "11px",
+                    padding: "1px 6px",
+                    borderRadius: "4px",
+                    backgroundColor: "rgba(13, 148, 136, 0.12)",
+                    color: "#0f766e",
+                    fontWeight: 600,
+                  }}
+                  title="Docking targets the druggable CDK partner (CDK6, PDB 5L2I) in the Cyclin D1–CDK cell-cycle signaling complex"
+                >
+                  CDK receptor
+                </span>
+              </>
+            ) : (
+              <span
+                className="phyto-row-meta"
+                style={{
+                  fontSize: "11px",
+                  padding: "1px 6px",
+                  borderRadius: "4px",
+                  backgroundColor: "rgba(37, 99, 235, 0.1)",
+                  color: "#2563eb",
+                  fontWeight: 600,
+                }}
+                title="Experimental crystal structure from RCSB PDB"
+              >
+                Experimental structure
+              </span>
+            )}
+          </span>
+        </span>
+      </button>
+      <label className="phyto-check">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled || busy}
+          aria-label={checked ? `Remove ${item.name} from this study` : `Select ${item.name} for this study`}
+          onChange={() => onToggle(item)}
+        />
+        <span aria-hidden />
+      </label>
+    </li>
+  )
+})

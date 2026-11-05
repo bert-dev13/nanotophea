@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import {
   ArrowLeft,
@@ -56,7 +56,7 @@ export function PhytochemicalBrowser({
   const [catalogItems, setCatalogItems] = useState<CatalogCompound[]>(CATALOG_COMPOUNDS)
   const [rows, setRows] = useState<Compound[]>([])
   const [loading, setLoading] = useState(true)
-  const [busyKey, setBusyKey] = useState<string | null>(null)
+  const [pendingKeys, setPendingKeys] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("all")
@@ -64,6 +64,20 @@ export function PhytochemicalBrowser({
   const [mobilePane, setMobilePane] = useState<"library" | "detail">("library")
   const [showSelected, setShowSelected] = useState(false)
   const [copied, setCopied] = useState(false)
+  const changeDebounceTimer = useRef<NodeJS.Timeout | null>(null)
+
+  const triggerDebouncedChanged = useCallback(() => {
+    if (changeDebounceTimer.current) clearTimeout(changeDebounceTimer.current)
+    changeDebounceTimer.current = setTimeout(() => {
+      handleChanged()
+    }, 300)
+  }, [handleChanged])
+
+  useEffect(() => {
+    return () => {
+      if (changeDebounceTimer.current) clearTimeout(changeDebounceTimer.current)
+    }
+  }, [])
 
   const load = useCallback(async () => {
     if (!activeStudy) return
@@ -119,17 +133,26 @@ export function PhytochemicalBrowser({
   const selectedCount = selectedItems.length
   const collapsed = selectedCount > 4 && !showSelected
 
-  const toggle = async (item: CatalogCompound) => {
-    if (!activeStudy || !user || busyKey) return
-    const existing = byName.get(item.name)
-    setBusyKey(item.key)
-    setError(null)
-    try {
+  const toggle = useCallback(
+    async (item: CatalogCompound) => {
+      if (!activeStudy || !user) return
+      const existing = byName.get(item.name)
+      const prevRows = rows
+      setError(null)
+      setPendingKeys((prev) => {
+        const next = new Set(prev)
+        next.add(item.key)
+        return next
+      })
+
+      // Instant optimistic update: update rows synchronously so checkbox state responds with 0ms latency
       if (existing) {
-        await deleteCompound(activeStudy.id, existing.id, { id: user.uid })
+        setRows((prev) => prev.filter((r) => r.name.toLowerCase() !== item.name.toLowerCase()))
       } else {
         const snapshot = pubchem && pubchem.cid === item.pubchemCid ? pubchem : undefined
-        await createCompound(activeStudy.id, { id: user.uid }, {
+        const optimistic: Compound = {
+          id: `temp-${item.key}-${Date.now()}`,
+          studyId: activeStudy.id,
           name: item.name,
           pubchemCid: item.pubchemCid,
           smiles: snapshot?.isomericSmiles ?? snapshot?.canonicalSmiles ?? item.smiles,
@@ -142,23 +165,62 @@ export function PhytochemicalBrowser({
           notes: item.notes,
           referenceIds: [],
           isPrimaryMarker: item.key === "quercetin",
-          provenance: item.pubchemCid ? { source: "PubChem" } : undefined,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          createdBy: user.uid,
+          updatedBy: user.uid,
+          provenance: {
+            evidenceClass: "REFERENCE",
+            source: item.pubchemCid ? "PubChem" : item.source || "Catalog",
+          },
+        }
+        setRows((prev) => [...prev, optimistic])
+      }
+
+      try {
+        if (existing) {
+          await deleteCompound(activeStudy.id, existing.id, { id: user.uid })
+        } else {
+          const snapshot = pubchem && pubchem.cid === item.pubchemCid ? pubchem : undefined
+          const created = await createCompound(activeStudy.id, { id: user.uid }, {
+            name: item.name,
+            pubchemCid: item.pubchemCid,
+            smiles: snapshot?.isomericSmiles ?? snapshot?.canonicalSmiles ?? item.smiles,
+            isomericSmiles: snapshot?.isomericSmiles ?? item.smiles,
+            formula: snapshot?.formula ?? item.formula,
+            molecularWeight: snapshot?.molecularWeight ?? item.molecularWeight,
+            chemicalClass: item.chemicalClass,
+            plantPart: item.plantPart,
+            source: item.pubchemCid ? `PubChem CID ${item.pubchemCid}` : item.source,
+            notes: item.notes,
+            referenceIds: [],
+            isPrimaryMarker: item.key === "quercetin",
+            provenance: item.pubchemCid ? { source: "PubChem" } : undefined,
+          })
+          setRows((prev) =>
+            prev.map((r) => (r.name.toLowerCase() === item.name.toLowerCase() ? created : r))
+          )
+        }
+        triggerDebouncedChanged()
+      } catch (e) {
+        setRows(prevRows)
+        setError(toUserFacingError(e, "Could not update this selection"))
+      } finally {
+        setPendingKeys((prev) => {
+          const next = new Set(prev)
+          next.delete(item.key)
+          return next
         })
       }
-      setRows(await listCompounds(activeStudy.id))
-      handleChanged()
-    } catch (e) {
-      setError(toUserFacingError(e, "Could not update this selection"))
-    } finally {
-      setBusyKey(null)
-    }
-  }
+    },
+    [activeStudy, user, byName, rows, pubchem, triggerDebouncedChanged]
+  )
 
-  const open = (item: CatalogCompound) => {
+  const open = useCallback((item: CatalogCompound) => {
     setViewKey(item.key)
     setCopied(false)
     setMobilePane("detail")
-  }
+  }, [])
 
   const smiles = pubchem?.isomericSmiles ?? pubchem?.canonicalSmiles ?? viewing?.smiles
   const copySmiles = async () => {
@@ -219,40 +281,21 @@ export function PhytochemicalBrowser({
           </div>
 
           <ul className="phyto-rows">
-            {visible.map((item, index) => {
+            {visible.map((item) => {
               const checked = byName.has(item.name)
               const current = viewing?.key === item.key
+              const isBusy = pendingKeys.has(item.key)
               return (
-                <li
+                <PhytochemicalRow
                   key={item.key}
-                  data-viewing={current ? "true" : "false"}
-                  data-selected={checked ? "true" : "false"}
-                  data-tone={item.filter}
-                  style={{ animationDelay: `${Math.min(index, 10) * 22}ms` }}
-                >
-                  <button type="button" className="phyto-row" onClick={() => open(item)}>
-                    <span className="phyto-row-mark" aria-hidden />
-                    <span className="phyto-row-copy">
-                      <span className="phyto-row-name">{item.name}</span>
-                      <span className="phyto-row-sub">
-                        <span className="phyto-row-class">{item.chemicalClass}</span>
-                        <span className="phyto-row-meta">
-                          {item.pubchemCid != null ? `CID ${item.pubchemCid}` : "No CID"}
-                        </span>
-                      </span>
-                    </span>
-                  </button>
-                  <label className="phyto-check">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      disabled={loading || busyKey != null}
-                      aria-label={checked ? `Remove ${item.name} from this study` : `Select ${item.name} for this study`}
-                      onChange={() => void toggle(item)}
-                    />
-                    <span aria-hidden />
-                  </label>
-                </li>
+                  item={item}
+                  checked={checked}
+                  viewing={current}
+                  busy={isBusy}
+                  disabled={loading}
+                  onOpen={open}
+                  onToggle={toggle}
+                />
               )
             })}
           </ul>
@@ -303,7 +346,7 @@ export function PhytochemicalBrowser({
                 type="button"
                 className="phyto-select"
                 data-on={byName.has(viewing.name) ? "true" : "false"}
-                disabled={busyKey != null}
+                disabled={loading || pendingKeys.has(viewing.key)}
                 onClick={() => void toggle(viewing)}
               >
                 {byName.has(viewing.name) ? (
@@ -500,3 +543,54 @@ function Unavailable({ onRetry }: { onRetry: () => void }) {
     </div>
   )
 }
+
+interface PhytochemicalRowProps {
+  item: CatalogCompound
+  checked: boolean
+  viewing: boolean
+  busy: boolean
+  disabled: boolean
+  onOpen: (item: CatalogCompound) => void
+  onToggle: (item: CatalogCompound) => void
+}
+
+const PhytochemicalRow = React.memo(function PhytochemicalRow({
+  item,
+  checked,
+  viewing,
+  busy,
+  disabled,
+  onOpen,
+  onToggle,
+}: PhytochemicalRowProps) {
+  return (
+    <li
+      data-viewing={viewing ? "true" : "false"}
+      data-selected={checked ? "true" : "false"}
+      data-tone={item.filter}
+    >
+      <button type="button" className="phyto-row" onClick={() => onOpen(item)}>
+        <span className="phyto-row-mark" aria-hidden />
+        <span className="phyto-row-copy">
+          <span className="phyto-row-name">{item.name}</span>
+          <span className="phyto-row-sub">
+            <span className="phyto-row-class">{item.chemicalClass}</span>
+            <span className="phyto-row-meta">
+              {item.pubchemCid != null ? `CID ${item.pubchemCid}` : "No CID"}
+            </span>
+          </span>
+        </span>
+      </button>
+      <label className="phyto-check">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled || busy}
+          aria-label={checked ? `Remove ${item.name} from this study` : `Select ${item.name} for this study`}
+          onChange={() => onToggle(item)}
+        />
+        <span aria-hidden />
+      </label>
+    </li>
+  )
+})

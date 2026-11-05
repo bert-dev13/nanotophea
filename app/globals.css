@@ -3006,12 +3006,8 @@ html, body { min-height: 100%; }
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.045);
-  animation: phyto-row-in 380ms ease backwards;
   transition: transform 180ms ease, border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
 }
-.phyto-workspace--stack .phyto-rows li:nth-child(2) { animation-delay: 50ms; }
-.phyto-workspace--stack .phyto-rows li:nth-child(3) { animation-delay: 100ms; }
-.phyto-workspace--stack .phyto-rows li:nth-child(4) { animation-delay: 150ms; }
 .phyto-workspace--stack .phyto-rows li:hover {
   transform: translateY(-2px);
   border-color: rgba(125, 222, 203, 0.4);
@@ -3370,14 +3366,14 @@ html, body { min-height: 100%; }
   padding: 0.15rem 0.45rem 0.45rem;
   overflow: auto;
   list-style: none;
+  contain: content;
 }
 .phyto-rows li {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   border-radius: 8px;
-  animation: phyto-row-in 220ms ease both;
-  transition: background-color 180ms ease;
+  transition: background-color 140ms ease;
 }
 .phyto-rows li[data-view="true"],
 .phyto-rows li[data-viewing="true"] {
@@ -3501,9 +3497,8 @@ html, body { min-height: 100%; }
   position: sticky;
   bottom: 0;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(8, 13, 18, 0.92);
+  background: #080d12;
   padding: 0.6rem 0.75rem 0.7rem;
-  backdrop-filter: blur(8px);
 }
 .phyto-picked-bar {
   display: flex;
@@ -3656,8 +3651,7 @@ html, body { min-height: 100%; }
   padding: 0.85rem 1rem;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(15, 25, 42, 0.65);
-  backdrop-filter: blur(8px);
+  background: rgba(15, 25, 42, 0.85);
 }
 .phyto-block h3 {
   margin: 0 0 0.5rem;

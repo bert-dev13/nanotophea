@@ -286,8 +286,8 @@ export function continueRequirements(stepId: StepId, readiness: StudyReadiness):
     const missing: string[] = []
     if (readiness.compounds < 1) {
       missing.push("Select at least one phytochemical before continuing to Molecular Docking.")
-    } else if (readiness.screenedCompounds < readiness.compounds) {
-      missing.push("Complete PubChem, drug-likeness, and ADME screening for each selected phytochemical before continuing to Molecular Docking.")
+    } else if (readiness.screenedCompounds < 1) {
+      missing.push("Complete PubChem, drug-likeness, and ADME screening for at least one selected phytochemical before continuing to Molecular Docking.")
     }
     if (readiness.proteins < 1) {
       missing.push("Select a target protein before continuing to Molecular Docking.")
@@ -341,7 +341,13 @@ export function resolvedDockingPairs(readiness: StudyReadiness): number {
  * Honest gaps that do not block the next step.
  * Predictions, laboratory entry, and analysis stay reachable without invented results.
  */
-export function continueAdvisory(_stepId: StepId, _readiness: StudyReadiness): string | null {
+export function continueAdvisory(stepId: StepId, readiness: StudyReadiness): string | null {
+  if (stepId === "insilico") {
+    if (readiness.compounds > readiness.screenedCompounds && readiness.screenedCompounds >= 1) {
+      const excluded = readiness.compounds - readiness.screenedCompounds
+      return `${readiness.screenedCompounds} of ${readiness.compounds} phytochemicals completed screening. The remaining ${excluded} compound${excluded > 1 ? "s are" : " is"} pending or excluded from Molecular Docking.`
+    }
+  }
   return null
 }
 
@@ -350,7 +356,7 @@ export function stepRequirementsMet(stepId: StepId, readiness: StudyReadiness): 
     case "setup":
       return readiness.compounds > 0 && readiness.proteins > 0 && readiness.cellLines > 0
     case "insilico":
-      return readiness.compounds > 0 && readiness.screenedCompounds >= readiness.compounds
+      return readiness.compounds > 0 && readiness.screenedCompounds >= 1 && readiness.proteins > 0
     case "docking":
       return requiredDockingPairs(readiness) > 0 && resolvedDockingPairs(readiness) >= requiredDockingPairs(readiness)
     case "predictions":
@@ -445,6 +451,15 @@ export function stepRecordStatus(
       if (readiness.interpretationFinal > 0 && readiness.staleInterpretations === 0) return "complete"
       return "review"
     }
+  }
+  if (stepId === "insilico") {
+    if (readiness.compounds > 0 && readiness.screenedCompounds >= readiness.compounds && readiness.proteins > 0) {
+      return "complete"
+    }
+    if (readiness.screenedCompounds > 0) {
+      return "in_progress"
+    }
+    return "incomplete"
   }
   if (stepId === "laboratory" && !stepRequirementsMet("laboratory", readiness)) {
     const started =
