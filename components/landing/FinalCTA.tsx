@@ -39,7 +39,7 @@ export function FinalCTA() {
 
             <div className="pt-4 flex flex-wrap items-center justify-center gap-3.5">
               <EnterLink>
-                <span>Open NANO-HEPATOTEA</span>
+                <span>Open HEPATOTEA</span>
                 <ArrowRight size={16} aria-hidden />
               </EnterLink>
               <EnterLink variant="secondary">

@@ -20,7 +20,7 @@ export function simulateRos(features: PredictionFeatures): PrototypePredictionRe
   const mitochondrial = round(hill(250, midpoint, round(slope + 0.2, 2), maximum * 0.8))
   return finishPrototype({
     endpoint: "ros",
-    modelName: "NANO-HEPATOTEA ROS",
+    modelName: "HEPATOTEA ROS",
     features,
     series,
     outputs: {

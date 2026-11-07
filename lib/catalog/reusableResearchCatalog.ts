@@ -114,7 +114,7 @@ export interface CatalogCellLine {
 export const CATALOG_FORMULATIONS: CatalogFormulation[] = [
   {
     key: "nanohepatotea",
-    name: "NanoHepatoTea",
+    name: "HepatoTea",
     plantMaterial: "Dried Phyllanthus niruri (Sampasampalukan) leaf",
     scientificName: "Phyllanthus niruri L.",
     components: [

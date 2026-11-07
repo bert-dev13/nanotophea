@@ -25,7 +25,7 @@ export function simulateBax(features: PredictionFeatures): PrototypePredictionRe
   const viable = round(Math.max(0, 100 - early - late - necrotic), 1)
   return finishPrototype({
     endpoint: "bax",
-    modelName: "NANO-HEPATOTEA BAX",
+    modelName: "HEPATOTEA BAX",
     features,
     series,
     outputs: {

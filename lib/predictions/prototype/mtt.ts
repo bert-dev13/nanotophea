@@ -22,7 +22,7 @@ export function simulateMtt(features: PredictionFeatures): PrototypePredictionRe
   const maxInhibition = round(hill(500, midpoint, slope, ceiling))
   return finishPrototype({
     endpoint: "mtt",
-    modelName: "NANO-HEPATOTEA MTT",
+    modelName: "HEPATOTEA MTT",
     features,
     series,
     outputs: {

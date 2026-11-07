@@ -10,7 +10,7 @@ const python = isWin
   : path.join(root, ".adme-venv", "bin", "python")
 
 console.log("=======================================================")
-console.log("       NANO-HEPATOTEA REAL LOCAL ADME INTEGRATION TEST")
+console.log("          HEPATOTEA REAL LOCAL ADME INTEGRATION TEST")
 console.log("=======================================================\n")
 
 if (!existsSync(python)) {

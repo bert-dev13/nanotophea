@@ -1344,8 +1344,8 @@ function SubjectPrediction({
 
 function systemCopy(value: string): string {
   return value
-    .replace(/NANO-HEPATOTEA Prototype|NANOTOPHEA Prototype/g, "NANO-HEPATOTEA")
-    .replace(/NANOTOPHEA/g, "NANO-HEPATOTEA")
+    .replace(/NANO-HEPATOTEA Prototype|NANOTOPHEA Prototype|HEPATOTEA Prototype/g, "HEPATOTEA")
+    .replace(/NANO-HEPATOTEA|NANOTOPHEA/g, "HEPATOTEA")
     .replace(/Deterministic prototype simulation/g, "Computational prediction")
     .replace(/\bprototype-v1\b/g, "v1")
     .replace(/\bprototype score\b/gi, "score")
@@ -1573,7 +1573,7 @@ function Provenance({
         </li>
         <li className="pred-spec-item">
           <span>Model Name</span>
-          <strong>{model || "NANO-HEPATOTEA Simulation"}</strong>
+          <strong>{model || "HEPATOTEA Simulation"}</strong>
         </li>
         <li className="pred-spec-item">
           <span>Version</span>

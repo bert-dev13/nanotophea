@@ -19,7 +19,7 @@ export function simulateLdh(features: PredictionFeatures): PrototypePredictionRe
   const at250 = series.find((point) => point.concentration === 250)?.value ?? 0
   return finishPrototype({
     endpoint: "ldh",
-    modelName: "NANO-HEPATOTEA LDH",
+    modelName: "HEPATOTEA LDH",
     features,
     series,
     outputs: {

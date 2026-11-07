@@ -8,7 +8,7 @@ import { execute, query, closePool } from "../lib/db/mysql"
 
 async function main() {
   console.log("==========================================")
-  console.log("  NANO-HEPATOTEA MySQL Record Cleanup Tool")
+  console.log("  HEPATOTEA MySQL Record Cleanup Tool")
   console.log("==========================================\n")
 
   // 1. Verify User Accounts

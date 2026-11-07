@@ -1,6 +1,6 @@
-# NANOTOPHEA Multi-Laptop Setup & Database Migration Guide
+# HEPATOTEA Multi-Laptop Setup & Database Migration Guide
 
-This guide describes how to synchronize and run **NANOTOPHEA** across multiple workstations (e.g. Laptop A and Laptop B) using the automated setup script and centralized database migration system.
+This guide describes how to synchronize and run **HEPATOTEA** across multiple workstations (e.g. Laptop A and Laptop B) using the automated setup script and centralized database migration system.
 
 ---
 

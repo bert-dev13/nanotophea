@@ -146,7 +146,7 @@ export function NewStudyModal({
               className="nano-control"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              placeholder="NanoHepatoTea SIP 2026"
+              placeholder="HepatoTea SIP 2026"
               required
               minLength={3}
             />
@@ -157,7 +157,7 @@ export function NewStudyModal({
               className="nano-control"
               value={shortTitle}
               onChange={(event) => setShortTitle(event.target.value)}
-              placeholder="NanoHepatoTea"
+              placeholder="HepatoTea"
             />
           </label>
           <label className="nano-studies-field">

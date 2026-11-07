@@ -173,7 +173,7 @@ export function AssistantStudyPage() {
   return (
     <div className="ai-desk">
       <AIWorkspaceHeader
-        title="NANO-HEPATOTEA AI"
+        title="HEPATOTEA AI"
         contextLine={contextLine}
         connected={Boolean(activeStudy)}
       />
@@ -223,7 +223,7 @@ export function AssistantStudyPage() {
           <AIComposer
             draft={draft}
             pending={pending}
-            placeholder={`Ask NANO-HEPATOTEA about ${scopeLabel}...`}
+            placeholder={`Ask HEPATOTEA about ${scopeLabel}...`}
             onDraft={setDraft}
             onSubmit={() => void ask(draft)}
           />

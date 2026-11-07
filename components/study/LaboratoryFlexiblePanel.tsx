@@ -289,10 +289,10 @@ export function FlexibleLabDialog({
           {endpoint === "mtt" ? (
             <>
               <div className="dock-field-row">
-                <label>IC50, if calculated outside NANO-HEPATOTEA<input value={draft.ic50} onChange={set("ic50")} inputMode="decimal" /></label>
+                <label>IC50, if calculated outside HEPATOTEA<input value={draft.ic50} onChange={set("ic50")} inputMode="decimal" /></label>
                 <label>IC50 unit<input value={draft.ic50Unit} onChange={set("ic50Unit")} placeholder="µg/mL" /></label>
               </div>
-              <label>IC50 method<input value={draft.ic50Method} onChange={set("ic50Method")} placeholder="Method used outside NANO-HEPATOTEA" /></label>
+              <label>IC50 method<input value={draft.ic50Method} onChange={set("ic50Method")} placeholder="Method used outside HEPATOTEA" /></label>
             </>
           ) : null}
           <label>Notes<textarea value={draft.notes} onChange={set("notes")} rows={2} /></label>
@@ -357,7 +357,7 @@ export function FlexibleResult({ dataset, endpoint }: { dataset: LabDataset; end
       {endpoint === "mtt" && rows.some((row) => row.viabilityPercent !== undefined) ? (
         <p className="dock-note">Cell viability % = {MTT_VIABILITY_FORMULA}. Growth inhibition % = {MTT_INHIBITION_FORMULA}.</p>
       ) : null}
-      {dataset.ic50 ? <p className="dock-note">IC50 {dataset.ic50.value} {dataset.ic50.unit}. Method: {dataset.ic50.method}. Calculated outside NANO-HEPATOTEA.</p> : null}
+      {dataset.ic50 ? <p className="dock-note">IC50 {dataset.ic50.value} {dataset.ic50.unit}. Method: {dataset.ic50.method}. Calculated outside HEPATOTEA.</p> : null}
       {dataset.notes?.trim() ? <p className="dock-note">{dataset.notes.trim()}</p> : null}
     </section>
   )

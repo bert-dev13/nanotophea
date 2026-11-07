@@ -160,7 +160,7 @@ export default function DashboardPanel() {
                   label={`Contract ${activeStudy?.contractVersion ?? "—"}`}
                   tone="slate"
                 />
-                <MetaChip icon={Leaf} label="NanoHepatoTea" tone="green" />
+                <MetaChip icon={Leaf} label="HepatoTea" tone="green" />
               </div>
 
               {activeStudy?.formulationSummary ? (

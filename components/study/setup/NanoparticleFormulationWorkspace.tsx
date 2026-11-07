@@ -378,7 +378,7 @@ export function NanoparticleFormulationWorkspace({
               Chitosan–TPP Nanoparticle
             </h2>
             <p className="text-xs text-slate-400 max-w-2xl leading-relaxed mt-0.5">
-              Nanoparticle carrier system used for the NanoHepatoTea formulation. Documents the ionic crosslinking interaction between polycationic chitosan and polyanionic tripolyphosphate (TPP).
+              Nanoparticle carrier system used for the HepatoTea formulation. Documents the ionic crosslinking interaction between polycationic chitosan and polyanionic tripolyphosphate (TPP).
             </p>
           </div>
 
@@ -498,7 +498,7 @@ export function NanoparticleFormulationWorkspace({
           <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
             <div className="flex items-center justify-between mb-3 border-b border-slate-800/80 pb-2">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                NanoHepatoTea Formulation Pathway
+                HepatoTea Formulation Pathway
               </span>
               <span className="text-[10.5px] text-slate-500">
                 Botanical Extract & Colloidal Nanocarrier Matrix
@@ -548,7 +548,7 @@ export function NanoparticleFormulationWorkspace({
                 </div>
                 <div>
                   <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Final Product</p>
-                  <p className="font-medium text-slate-200 text-xs">NanoHepatoTea</p>
+                  <p className="font-medium text-slate-200 text-xs">HepatoTea</p>
                 </div>
               </div>
             </div>

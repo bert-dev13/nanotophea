@@ -1,6 +1,6 @@
-# NANO-HEPATOTEA
+# HEPATOTEA
 
-**NanoHepatoTea Bioinformatics Research Platform**
+**HepatoTea Bioinformatics Research Platform**
 
 Study-scoped research workspace for computational prediction, laboratory recording, statistics, comparison, and researcher-authored interpretation — with strict evidence-class separation.
 

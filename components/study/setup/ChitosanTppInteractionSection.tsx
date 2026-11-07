@@ -539,7 +539,7 @@ export function ChitosanTppInteractionSection({
         {/* Professional Research Language (Requirement 8) */}
         <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-xs text-slate-300 leading-relaxed space-y-2">
           <p className="font-medium text-slate-200">
-            A validated computational polymer-modeling engine has not yet been connected to NANO-HEPATOTEA.
+            A validated computational polymer-modeling engine has not yet been connected to HEPATOTEA.
           </p>
           <p className="text-slate-400">
             Chitosan–TPP formation involves polymer self-assembly and ionic crosslinking rather than conventional ligand–protein docking. The interaction visualization above is an explanatory schematic model of the recorded formulation protocol.

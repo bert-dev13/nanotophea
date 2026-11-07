@@ -66,19 +66,19 @@ const CODES: LabTreatmentCode[] = ["T1", "T2", "T3", "T4", "T5", "T6"]
 const DPPH_LABEL: Record<LabTreatmentCode, string> = {
   T1: "Solvent control",
   T2: "Ascorbic acid control",
-  T3: "NanoHepatoTea",
-  T4: "NanoHepatoTea",
-  T5: "NanoHepatoTea",
-  T6: "NanoHepatoTea",
+  T3: "HepatoTea",
+  T4: "HepatoTea",
+  T5: "HepatoTea",
+  T6: "HepatoTea",
 }
 
 const LDH_LABEL: Record<LabTreatmentCode, string> = {
   T1: "Control",
   T2: "Maximum LDH release",
-  T3: "NanoHepatoTea",
-  T4: "NanoHepatoTea",
-  T5: "NanoHepatoTea",
-  T6: "NanoHepatoTea",
+  T3: "HepatoTea",
+  T4: "HepatoTea",
+  T5: "HepatoTea",
+  T6: "HepatoTea",
 }
 
 type Grid = Record<LabTreatmentCode, [string, string, string]>
@@ -977,7 +977,7 @@ function AssayPanel({
       <ul className="phyto-identity">
         <li>
           <span>Target / Phytochemical</span>
-          <strong>{compounds.length ? compounds.join(", ") : "NanoHepatoTea Complex"}</strong>
+          <strong>{compounds.length ? compounds.join(", ") : "HepatoTea Complex"}</strong>
         </li>
         <li>
           <span>Model & System</span>
@@ -1341,7 +1341,7 @@ function AssayDialog({
             <label>IC50<input value={draft.ic50} onChange={set("ic50")} inputMode="decimal" /></label>
             <label>IC50 unit<input value={draft.ic50Unit} onChange={set("ic50Unit")} placeholder="µg/mL" /></label>
           </div>
-          <label>IC50 method<input value={draft.ic50Method} onChange={set("ic50Method")} placeholder="Method used outside NANO-HEPATOTEA" /></label>
+          <label>IC50 method<input value={draft.ic50Method} onChange={set("ic50Method")} placeholder="Method used outside HEPATOTEA" /></label>
           <label>Notes<textarea value={draft.notes} onChange={set("notes")} rows={2} /></label>
           {message ? <p role="alert">{message}</p> : null}
         </form>
@@ -1377,7 +1377,7 @@ function CharacterizationPanel({
           </p>
           <h2>Product Characterization</h2>
           <p className="phyto-subtitle">
-            Record actual HPLC profiles, heavy metal testing, and physicochemical quality parameters for NanoHepatoTea.
+            Record actual HPLC profiles, heavy metal testing, and physicochemical quality parameters for HepatoTea.
           </p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
@@ -1392,7 +1392,7 @@ function CharacterizationPanel({
       <ul className="phyto-identity">
         <li>
           <span>Product Formulation</span>
-          <strong>NanoHepatoTea Complex</strong>
+          <strong>HepatoTea Complex</strong>
         </li>
         <li>
           <span>Characterization Protocols</span>

@@ -45,7 +45,7 @@ export function LandingNavbar() {
             <BrandLogo size="sm" priority />
           </div>
           <span>
-            <span className="lp-word transition-colors group-hover:text-[var(--lp-green)]">NANO-HEPATOTEA</span>
+            <span className="lp-word transition-colors group-hover:text-[var(--lp-green)]">HEPATOTEA</span>
             <span className="lp-sub">Research Platform</span>
           </span>
         </a>

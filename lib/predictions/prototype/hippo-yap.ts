@@ -19,7 +19,7 @@ export function simulateHippoYap(features: PredictionFeatures): PrototypePredict
   const yap = series.find((point) => point.concentration === 250)?.value ?? 0
   return finishPrototype({
     endpoint: "hippo_yap",
-    modelName: "NANO-HEPATOTEA Hippo–YAP",
+    modelName: "HEPATOTEA Hippo–YAP",
     features,
     series,
     note: yap >= 40

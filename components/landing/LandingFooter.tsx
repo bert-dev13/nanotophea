@@ -18,10 +18,10 @@ export function LandingFooter() {
           </div>
           <div>
             <span className="block font-bold text-[var(--lp-heading)] tracking-tight text-sm font-display">
-              NANO-HEPATOTEA
+              HEPATOTEA
             </span>
             <span className="block text-xs text-[var(--lp-green)]">
-              NanoHepatoTea Bioinformatics Platform
+              HepatoTea Bioinformatics Platform
             </span>
           </div>
         </div>

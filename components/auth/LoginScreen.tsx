@@ -238,7 +238,7 @@ export function LoginScreen() {
               <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
             </span>
             <span className="text-[11px] font-semibold tracking-wider uppercase text-emerald-600 dark:text-emerald-300">
-              NANO-HEPATOTEA Research Platform
+              HEPATOTEA Research Platform
             </span>
           </div>
 
@@ -250,10 +250,10 @@ export function LoginScreen() {
               </div>
               <div>
                 <span className="block text-2xl sm:text-3xl font-black tracking-tight text-[var(--foreground)] font-display">
-                  NANO-HEPATOTEA
+                  HEPATOTEA
                 </span>
                 <span className="block text-xs font-semibold text-emerald-600 dark:text-emerald-400 tracking-wide">
-                  NanoHepatoTea Bioinformatics Platform
+                  HepatoTea Bioinformatics Platform
                 </span>
               </div>
             </div>
@@ -372,7 +372,7 @@ export function LoginScreen() {
               </div>
 
               <h2 className="text-2xl font-bold tracking-tight text-[var(--card-foreground)] font-display">
-                Sign In to NANO-HEPATOTEA
+                Sign In to HEPATOTEA
               </h2>
               <p className="text-xs text-[var(--muted-foreground)]">
                 Enter your authorized credentials to access research studies, computational workflows, and experimental records.
@@ -471,7 +471,7 @@ export function LoginScreen() {
             {/* Notice & Platform Overview */}
             <div className="mt-6 border-t border-[var(--border)] pt-4 space-y-3 text-center">
               <p className="text-[11.5px] leading-relaxed text-[var(--muted-foreground)]">
-                Access is restricted to authorized NANO-HEPATOTEA researchers. Self-registration is disabled.
+                Access is restricted to authorized HEPATOTEA researchers. Self-registration is disabled.
               </p>
               <Link
                 href="/"

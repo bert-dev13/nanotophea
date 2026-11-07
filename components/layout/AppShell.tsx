@@ -101,10 +101,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [])
 
   if (!mounted) {
-    return <LoadingBrand label="Loading NANO-HEPATOTEA..." />
+    return <LoadingBrand label="Loading HEPATOTEA..." />
   }
 
-  const loadingFallback = <LoadingBrand label="Loading NANO-HEPATOTEA..." />
+  const loadingFallback = <LoadingBrand label="Loading HEPATOTEA..." />
 
   return (
     <AuthProvider>

@@ -30,16 +30,16 @@ export interface LabAssayConfig {
 const SHARED_TREATMENTS: LabTreatmentDefinition[] = [
   { code: "T1", label: "Negative / solvent control", role: "negative_control" },
   { code: "T2", label: "Positive control", role: "positive_control" },
-  { code: "T3", label: "NanoHepatoTea", concentrationUgPerMl: 50, role: "treatment" },
-  { code: "T4", label: "NanoHepatoTea", concentrationUgPerMl: 100, role: "treatment" },
-  { code: "T5", label: "NanoHepatoTea", concentrationUgPerMl: 250, role: "treatment" },
-  { code: "T6", label: "NanoHepatoTea", concentrationUgPerMl: 500, role: "treatment" },
+  { code: "T3", label: "HepatoTea", concentrationUgPerMl: 50, role: "treatment" },
+  { code: "T4", label: "HepatoTea", concentrationUgPerMl: 100, role: "treatment" },
+  { code: "T5", label: "HepatoTea", concentrationUgPerMl: 250, role: "treatment" },
+  { code: "T6", label: "HepatoTea", concentrationUgPerMl: 500, role: "treatment" },
 ]
 
 export const DPPH_ASSAY_CONFIG: LabAssayConfig = {
   assay: "dpph",
   title: "Experimental DPPH",
-  subtitle: "Wet-lab DPPH radical-scavenging results for NanoHepatoTea.",
+  subtitle: "Wet-lab DPPH radical-scavenging results for HepatoTea.",
   banner: "EXPERIMENTAL DPPH — Laboratory",
   contractNote:
     "T1 solvent control; T2 ascorbic acid (record actual concentration used); T3–T6 at 50/100/250/500 µg/mL; R1–R3. Wavelength 517 nm. Never invent missing measurements.",

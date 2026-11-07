@@ -66,7 +66,7 @@ interface FormState {
 
 function blankForm(): FormState {
   return {
-    name: "NanoHepatoTea",
+    name: "HepatoTea",
     plantMaterial: "Dried Phyllanthus niruri leaf",
     scientificName: "Phyllanthus niruri L.",
     leafMassG: "2",
@@ -235,7 +235,7 @@ export default function FormulationPanel() {
         <FormulationHero />
         <ResearchEmptyState
           title="No active study"
-          body="Create a study from the toolbar to load the locked NanoHepatoTea formulation."
+          body="Create a study from the toolbar to load the locked HepatoTea formulation."
           canEdit={false}
         />
       </div>
@@ -279,7 +279,7 @@ export default function FormulationPanel() {
       {!loading && filtered.length === 0 && mode === "view" ? (
         <ResearchEmptyState
           title="No formulations"
-          body="Seeded NanoHepatoTea appears for new studies. Add a formulation with provenance, or re-open after study create."
+          body="Seeded HepatoTea appears for new studies. Add a formulation with provenance, or re-open after study create."
           canEdit={canEdit}
           actionLabel="Add formulation"
           onAction={startCreate}
@@ -623,7 +623,7 @@ function FormulationHero({
             Formulation
           </h1>
           <p className="mt-1.5 max-w-xl text-[13px] leading-relaxed text-slate-600">
-            Canonical NanoHepatoTea composition and preparation context for this study — research
+            Canonical HepatoTea composition and preparation context for this study — research
             metadata only, not clinical dosing.
           </p>
           {role ? (

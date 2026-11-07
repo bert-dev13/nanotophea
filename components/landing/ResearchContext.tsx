@@ -12,7 +12,7 @@ const META = [
   },
   {
     label: "Study context",
-    value: "NanoHepatoTea",
+    value: "HepatoTea",
     desc: "Targeted green nanomedicine formulation",
     icon: FlaskConical,
     color: "text-teal-400 bg-teal-500/15",
@@ -64,12 +64,12 @@ export function ResearchContext() {
             </h2>
 
             <p className="lp-lead text-[var(--lp-copy)] leading-relaxed">
-              NANO-HEPATOTEA supports the computational and experimental assessment of selected phytochemicals and
+              HEPATOTEA supports the computational and experimental assessment of selected phytochemicals and
               their potential interactions with liver-cancer-related biological targets.
             </p>
 
             <p className="lp-note text-[var(--lp-muted)] leading-relaxed text-sm">
-              The current research focus is NanoHepatoTea and the HepG2 cell line. Findings stay inside the study
+              The current research focus is HepatoTea and the HepG2 cell line. Findings stay inside the study
               record, with each layer of evidence labeled across the full pipeline.
             </p>
 
