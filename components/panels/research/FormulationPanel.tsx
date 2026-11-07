@@ -305,9 +305,8 @@ export default function FormulationPanel() {
                       setSelectedId(r.id)
                       setMode("view")
                     }}
-                    className={`nano-formu-list-item group w-full text-left ${
-                      active ? "nano-formu-list-item--active" : ""
-                    }`}
+                    className={`nano-formu-list-item group w-full text-left ${active ? "nano-formu-list-item--active" : ""
+                      }`}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <span className="min-w-0 truncate text-[13px] font-semibold text-slate-900">
