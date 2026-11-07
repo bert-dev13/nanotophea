@@ -374,8 +374,8 @@ export function StudiesHome() {
       {/* Modals & Alerts */}
       <NewStudyModal
         open={creating}
-        onClose={() => setCreating(false)}
-        onCreated={(study) => router.push(studyPath(study.id, "setup", "phytochemicals"))}
+        onCloseAction={() => setCreating(false)}
+        onCreatedAction={(study) => router.push(studyPath(study.id, "setup", "phytochemicals"))}
       />
 
       <DeleteStudyModal

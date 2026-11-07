@@ -171,7 +171,7 @@ export function StudySelector() {
               ) : null}
         </div>
       ) : null}
-      <NewStudyModal open={creating} onClose={() => setCreating(false)} />
+      <NewStudyModal open={creating} onCloseAction={() => setCreating(false)} />
     </div>
   )
 }

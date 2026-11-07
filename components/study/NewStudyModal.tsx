@@ -6,19 +6,27 @@ import { X } from "lucide-react"
 import { useStudy } from "@/components/providers/StudyProvider"
 import type { Study } from "@/lib/domain/models"
 
+export interface NewStudyModalProps {
+  open: boolean
+  onClose?: () => void
+  onCloseAction?: () => void
+  onCreated?: (study: Study) => void
+  onCreatedAction?: (study: Study) => void
+}
+
 export function NewStudyModal({
   open,
   onClose,
+  onCloseAction,
   onCreated,
-}: {
-  open: boolean
-  onClose: () => void
-  onCreated?: (study: Study) => void
-}) {
+  onCreatedAction,
+}: NewStudyModalProps) {
+  const handleClose = onCloseAction ?? onClose ?? (() => {})
+  const handleCreated = onCreatedAction ?? onCreated
   const { createNewStudy } = useStudy()
   const titleId = useId()
   const dialogRef = useRef<HTMLDivElement>(null)
-  const onCloseRef = useRef(onClose)
+  const onCloseRef = useRef(handleClose)
   const busyRef = useRef(false)
   const [title, setTitle] = useState("")
   const [shortTitle, setShortTitle] = useState("")
@@ -28,7 +36,7 @@ export function NewStudyModal({
   const [formError, setFormError] = useState<string | null>(null)
   const [mounted, setMounted] = useState(false)
 
-  onCloseRef.current = onClose
+  onCloseRef.current = handleClose
   busyRef.current = busy
 
   useEffect(() => {
@@ -100,7 +108,7 @@ export function NewStudyModal({
         ...(description.trim() ? { description: description.trim() } : {}),
         ...(fairYear.trim() ? { fairYear: fairYear.trim() } : {}),
       })
-      onCreated?.(study)
+      handleCreated?.(study)
       onCloseRef.current()
     } catch (e) {
       setFormError(e instanceof Error ? e.message : "Could not create the study")
@@ -112,7 +120,7 @@ export function NewStudyModal({
     <div
       className="nano-modal-back"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !busy) onClose()
+        if (event.target === event.currentTarget && !busy) handleClose()
       }}
     >
       <div
@@ -129,7 +137,7 @@ export function NewStudyModal({
             </h2>
             <p className="nano-studies-form-copy">It opens on Research Setup after it is created.</p>
           </div>
-          <button type="button" className="nano-modal-close" aria-label="Close" disabled={busy} onClick={onClose}>
+          <button type="button" className="nano-modal-close" aria-label="Close" disabled={busy} onClick={handleClose}>
             <X size={16} aria-hidden />
           </button>
         </div>
