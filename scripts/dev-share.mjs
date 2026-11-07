@@ -28,17 +28,23 @@ let dockingOk = false
 
 if (existsSync(python)) {
   pythonOk = true
-  const rdkitCheck = spawnSync(python, ["-c", "import rdkit; print('OK')"], { encoding: "utf8" })
-  if (rdkitCheck.status === 0 && (rdkitCheck.stdout || "").includes("OK")) {
-    rdkitOk = true
-  }
-  const admeCheck = spawnSync(python, ["-c", "import admet_ai, fastapi, uvicorn; print('OK')"], { encoding: "utf8" })
-  if (admeCheck.status === 0 && (admeCheck.stdout || "").includes("OK")) {
-    admeReady = true
-  }
-  const meekoCheck = spawnSync(python, ["-c", "import meeko, gemmi, openbabel; print('OK')"], { encoding: "utf8" })
-  if (meekoCheck.status === 0 && (meekoCheck.stdout || "").includes("OK")) {
-    dockingOk = true
+  try {
+    const pkgCheck = spawnSync(
+      python,
+      [
+        "-c",
+        "import importlib.util as u, json; print(json.dumps({'rdkit': bool(u.find_spec('rdkit')), 'adme': bool(u.find_spec('admet_ai') and u.find_spec('fastapi') and u.find_spec('uvicorn')), 'docking': bool(u.find_spec('meeko') and u.find_spec('gemmi') and u.find_spec('openbabel'))}))",
+      ],
+      { encoding: "utf8", windowsHide: true }
+    )
+    if (pkgCheck.status === 0) {
+      const parsed = JSON.parse((pkgCheck.stdout || "{}").trim())
+      rdkitOk = Boolean(parsed.rdkit)
+      admeReady = Boolean(parsed.adme)
+      dockingOk = Boolean(parsed.docking)
+    }
+  } catch {
+    // Keep defaults
   }
 }
 

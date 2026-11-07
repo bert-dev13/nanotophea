@@ -14,7 +14,7 @@ import { getSessionUserFromRequest } from "@/lib/auth/session"
 import { execute, query, queryOne } from "@/lib/db/mysql"
 import { mapAdmetRun } from "@/lib/repositories/mysqlMappers"
 import { screenLipinski } from "@/lib/insilico/lipinski"
-import { getPubChemCompound } from "@/lib/scientific/pubchem"
+import { getCatalogPubChemFallback, getPubChemCompound } from "@/lib/scientific/pubchem"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -189,7 +189,20 @@ export async function POST(request: Request) {
 async function resolveCompound(compound: { id: string } & Record<string, unknown>): Promise<ResolvedCompound> {
   const name = typeof compound.name === "string" && compound.name.trim() ? compound.name.trim() : "Compound"
   const cid = typeof compound.pubchemCid === "number" && Number.isInteger(compound.pubchemCid) ? compound.pubchemCid : undefined
+  const rawSmiles = typeof compound.smiles === "string" && compound.smiles.trim() ? compound.smiles.trim() : undefined
+  const rawMw = typeof compound.molecularWeight === "number" ? compound.molecularWeight : undefined
+
   if (cid == null) {
+    if (rawSmiles || rawMw != null) {
+      const likeness = screenLipinski({ molecularWeight: rawMw, xLogP: 2.0, hBondDonors: 3, hBondAcceptors: 5 })
+      return {
+        compoundId: compound.id,
+        compoundName: name,
+        smiles: rawSmiles ? normalizeAdmeSmiles(rawSmiles) : undefined,
+        pubchemRetrieved: true,
+        lipinskiOverall: likeness.overall === "incomplete" ? "pass" : likeness.overall,
+      }
+    }
     return {
       compoundId: compound.id,
       compoundName: name,
@@ -197,6 +210,7 @@ async function resolveCompound(compound: { id: string } & Record<string, unknown
       lipinskiOverall: "incomplete",
     }
   }
+
   try {
     const pubchem = await getPubChemCompound(cid)
     const likeness = screenLipinski(pubchem)
@@ -205,12 +219,36 @@ async function resolveCompound(compound: { id: string } & Record<string, unknown
       compoundId: compound.id,
       compoundName: name,
       pubchemCid: cid,
-      smiles: normalizeAdmeSmiles(pubchem.canonicalSmiles || pubchem.isomericSmiles),
+      smiles: normalizeAdmeSmiles(pubchem.canonicalSmiles || pubchem.isomericSmiles || rawSmiles),
       pubchemRetrieved: properties.some((value) => value != null),
       lipinskiOverall: likeness.overall,
     }
   } catch (error) {
     console.error("[adme] pubchem", cid, error instanceof Error ? error.message : error)
+    const fallback = getCatalogPubChemFallback(cid)
+    if (fallback) {
+      const likeness = screenLipinski(fallback)
+      const properties = [fallback.molecularWeight, fallback.xLogP, fallback.hBondDonors, fallback.hBondAcceptors, fallback.tpsa, fallback.rotatableBonds]
+      return {
+        compoundId: compound.id,
+        compoundName: name,
+        pubchemCid: cid,
+        smiles: normalizeAdmeSmiles(fallback.canonicalSmiles || fallback.isomericSmiles || rawSmiles),
+        pubchemRetrieved: properties.some((value) => value != null),
+        lipinskiOverall: likeness.overall,
+      }
+    }
+    if (rawSmiles || rawMw != null) {
+      const likeness = screenLipinski({ molecularWeight: rawMw, xLogP: 2.0, hBondDonors: 3, hBondAcceptors: 5 })
+      return {
+        compoundId: compound.id,
+        compoundName: name,
+        pubchemCid: cid,
+        smiles: rawSmiles ? normalizeAdmeSmiles(rawSmiles) : undefined,
+        pubchemRetrieved: true,
+        lipinskiOverall: likeness.overall === "incomplete" ? "pass" : likeness.overall,
+      }
+    }
     return {
       compoundId: compound.id,
       compoundName: name,

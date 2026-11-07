@@ -27,6 +27,7 @@ import {
   type CompoundFilter,
 } from "@/lib/catalog/reusableResearchCatalog"
 import { usePubChemCompound } from "@/lib/scientific/client"
+import { getCatalogPubChemFallback } from "@/lib/scientific/pubchem"
 import type { PubChemCompound } from "@/lib/scientific/types"
 import type { Compound } from "@/lib/domain/models"
 import { toUserFacingError } from "@/lib/errors/userFacing"
@@ -216,6 +217,101 @@ export function PhytochemicalBrowser({
     [activeStudy, user, byName, rows, pubchem, triggerDebouncedChanged]
   )
 
+  const [batchBusy, setBatchBusy] = useState(false)
+
+  const selectAllVisible = useCallback(async () => {
+    if (!activeStudy || !user || visible.length === 0) return
+    const unselected = visible.filter((item) => !byName.has(item.name))
+    if (unselected.length === 0) return
+
+    setBatchBusy(true)
+    setError(null)
+    const prevRows = rows
+
+    const optimisticRows: Compound[] = unselected.map((item) => {
+      const fallback = getCatalogPubChemFallback(item.pubchemCid ?? 0)
+      return {
+        id: `temp-${item.key}-${Date.now()}-${Math.random()}`,
+        studyId: activeStudy.id,
+        name: item.name,
+        pubchemCid: item.pubchemCid,
+        smiles: fallback?.isomericSmiles ?? fallback?.canonicalSmiles ?? item.smiles,
+        isomericSmiles: fallback?.isomericSmiles ?? item.smiles,
+        formula: fallback?.formula ?? item.formula,
+        molecularWeight: fallback?.molecularWeight ?? item.molecularWeight,
+        chemicalClass: item.chemicalClass,
+        plantPart: item.plantPart,
+        source: item.pubchemCid ? `PubChem CID ${item.pubchemCid}` : item.source,
+        notes: item.notes,
+        referenceIds: [],
+        isPrimaryMarker: item.key === "quercetin",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        createdBy: user.uid,
+        updatedBy: user.uid,
+        provenance: {
+          evidenceClass: "REFERENCE",
+          source: item.pubchemCid ? "PubChem" : item.source || "Catalog",
+        },
+      }
+    })
+    setRows((prev) => [...prev, ...optimisticRows])
+
+    try {
+      await Promise.allSettled(
+        unselected.map((item) => {
+          const fallback = getCatalogPubChemFallback(item.pubchemCid ?? 0)
+          return createCompound(activeStudy.id, { id: user.uid }, {
+            name: item.name,
+            pubchemCid: item.pubchemCid,
+            smiles: fallback?.isomericSmiles ?? fallback?.canonicalSmiles ?? item.smiles,
+            isomericSmiles: fallback?.isomericSmiles ?? item.smiles,
+            formula: fallback?.formula ?? item.formula,
+            molecularWeight: fallback?.molecularWeight ?? item.molecularWeight,
+            chemicalClass: item.chemicalClass,
+            plantPart: item.plantPart,
+            source: item.pubchemCid ? `PubChem CID ${item.pubchemCid}` : item.source,
+            notes: item.notes,
+            referenceIds: [],
+            isPrimaryMarker: item.key === "quercetin",
+            provenance: item.pubchemCid ? { source: "PubChem" } : undefined,
+          })
+        })
+      )
+      const freshRows = await listCompounds(activeStudy.id)
+      setRows(freshRows)
+      triggerDebouncedChanged()
+    } catch (e) {
+      setRows(prevRows)
+      setError(toUserFacingError(e, "Could not complete batch selection"))
+    } finally {
+      setBatchBusy(false)
+    }
+  }, [activeStudy, user, visible, byName, rows, triggerDebouncedChanged])
+
+  const clearAllSelected = useCallback(async () => {
+    if (!activeStudy || !user || rows.length === 0) return
+    setBatchBusy(true)
+    setError(null)
+    const prevRows = rows
+
+    setRows([])
+
+    try {
+      await Promise.allSettled(
+        prevRows.map((r) => deleteCompound(activeStudy.id, r.id, { id: user.uid }))
+      )
+      const freshRows = await listCompounds(activeStudy.id)
+      setRows(freshRows)
+      triggerDebouncedChanged()
+    } catch (e) {
+      setRows(prevRows)
+      setError(toUserFacingError(e, "Could not clear selections"))
+    } finally {
+      setBatchBusy(false)
+    }
+  }, [activeStudy, user, rows, triggerDebouncedChanged])
+
   const open = useCallback((item: CatalogCompound) => {
     setViewKey(item.key)
     setCopied(false)
@@ -263,6 +359,33 @@ export function PhytochemicalBrowser({
               onChange={(event) => setQuery(event.target.value)}
             />
           </label>
+
+          <div className="flex items-center justify-between gap-2 px-2 py-1.5 text-xs text-slate-500 border-b border-slate-100 dark:border-slate-800">
+            <span className="font-medium text-slate-600 dark:text-slate-300">
+              {selectedCount === catalogItems.length && catalogItems.length > 0
+                ? `All ${selectedCount} selected`
+                : `${selectedCount} of ${catalogItems.length} selected`}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="text-emerald-600 dark:text-emerald-400 font-semibold hover:underline cursor-pointer disabled:opacity-40"
+                disabled={loading || batchBusy || visible.every((item) => byName.has(item.name))}
+                onClick={() => void selectAllVisible()}
+              >
+                {batchBusy ? "Processing..." : `Select All ${filter !== "all" || query ? `(${visible.length})` : ""}`}
+              </button>
+              <span className="text-slate-300 dark:text-slate-700">|</span>
+              <button
+                type="button"
+                className="text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 font-medium cursor-pointer disabled:opacity-40"
+                disabled={loading || batchBusy || selectedCount === 0}
+                onClick={() => void clearAllSelected()}
+              >
+                Clear All
+              </button>
+            </div>
+          </div>
 
           <div className="phyto-filters" role="tablist" aria-label="Compound class">
             {FILTERS.map((item) => (

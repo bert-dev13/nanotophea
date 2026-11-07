@@ -232,6 +232,74 @@ export function ProteinBrowser({
     [activeStudy, user, rows, triggerDebouncedChanged]
   )
 
+  const [batchBusy, setBatchBusy] = useState(false)
+
+  const selectAllVisible = useCallback(async () => {
+    if (!activeStudy || !user || visible.length === 0) return
+    const unselected = visible.filter((item) => !byName.has(item.name))
+    if (unselected.length === 0) return
+
+    setBatchBusy(true)
+    setError(null)
+    const prevRows = rows
+
+    const optimisticRows: Protein[] = unselected.map((item) => {
+      const input = catalogProteinInput(item)
+      return {
+        ...input,
+        id: `temp-${item.key}-${Date.now()}-${Math.random()}`,
+        studyId: activeStudy.id,
+        referenceIds: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        createdBy: user.uid,
+        updatedBy: user.uid,
+        provenance: {
+          evidenceClass: "REFERENCE",
+          source: item.pdbId ? "RCSB PDB" : "Catalog",
+        },
+      }
+    })
+    setRows((prev) => [...prev, ...optimisticRows])
+
+    try {
+      await Promise.allSettled(
+        unselected.map((item) => createProtein(activeStudy.id, { id: user.uid }, catalogProteinInput(item)))
+      )
+      const freshRows = await listProteins(activeStudy.id)
+      setRows(freshRows)
+      triggerDebouncedChanged()
+    } catch (e) {
+      setRows(prevRows)
+      setError(toUserFacingError(e, "Could not complete batch selection"))
+    } finally {
+      setBatchBusy(false)
+    }
+  }, [activeStudy, user, visible, byName, rows, triggerDebouncedChanged])
+
+  const clearAllSelected = useCallback(async () => {
+    if (!activeStudy || !user || rows.length === 0) return
+    setBatchBusy(true)
+    setError(null)
+    const prevRows = rows
+
+    setRows([])
+
+    try {
+      await Promise.allSettled(
+        prevRows.map((r) => deleteProtein(activeStudy.id, r.id, { id: user.uid }))
+      )
+      const freshRows = await listProteins(activeStudy.id)
+      setRows(freshRows)
+      triggerDebouncedChanged()
+    } catch (e) {
+      setRows(prevRows)
+      setError(toUserFacingError(e, "Could not clear selections"))
+    } finally {
+      setBatchBusy(false)
+    }
+  }, [activeStudy, user, rows, triggerDebouncedChanged])
+
   const open = useCallback((item: CatalogProtein) => {
     setViewKey(item.key)
     setMobilePane("detail")
@@ -264,6 +332,32 @@ export function ProteinBrowser({
             <Search size={14} aria-hidden />
             <input value={query} placeholder="Search proteins..." onChange={(event) => setQuery(event.target.value)} />
           </label>
+          <div className="flex items-center justify-between gap-2 px-2 py-1.5 text-xs text-slate-500 border-b border-slate-100 dark:border-slate-800">
+            <span className="font-medium text-slate-600 dark:text-slate-300">
+              {selectedCount === CATALOG_PROTEINS.length && CATALOG_PROTEINS.length > 0
+                ? `All ${selectedCount} selected`
+                : `${selectedCount} of ${CATALOG_PROTEINS.length} selected`}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="text-emerald-600 dark:text-emerald-400 font-semibold hover:underline cursor-pointer disabled:opacity-40"
+                disabled={loading || batchBusy || visible.every((item) => byName.has(item.name))}
+                onClick={() => void selectAllVisible()}
+              >
+                {batchBusy ? "Processing..." : `Select All ${filter !== "all" || query ? `(${visible.length})` : ""}`}
+              </button>
+              <span className="text-slate-300 dark:text-slate-700">|</span>
+              <button
+                type="button"
+                className="text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 font-medium cursor-pointer disabled:opacity-40"
+                disabled={loading || batchBusy || selectedCount === 0}
+                onClick={() => void clearAllSelected()}
+              >
+                Clear All
+              </button>
+            </div>
+          </div>
           <div className="phyto-filters" role="tablist" aria-label="Protein class">
             {FILTERS.map((item) => (
               <button
