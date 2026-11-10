@@ -9,12 +9,18 @@ import { useWorkflowStatus } from "@/components/study/WorkflowStatus"
 import { EvidenceBadge } from "@/components/ui/EvidenceBadge"
 import { computeComparison, type ComparisonComputation } from "@/lib/comparison/runComparison"
 import type { DockingRun, Interpretation, LabDataset, PredictionRun } from "@/lib/domain/models"
+import { sanitizedPredictionLines } from "@/lib/predictions/displaySanitization"
 import {
   CHARACTERIZATION_ASSAYS,
   CHARACTERIZATION_LABELS,
   getLabAssayConfig,
   type CharacterizationAssay,
 } from "@/lib/lab/labAssayConfig"
+import {
+  ldhNanoparticleSetupSummary,
+  ldhSelectivityIndexDisplay,
+  normalizeLdhNanoparticleSetup,
+} from "@/lib/lab/ldhNanoparticleSetup"
 import {
   endpointCoverageStatus,
   PREDICTION_LAB_ENDPOINTS,
@@ -182,19 +188,9 @@ function fmt2(value: number): string {
 
 function simulationLines(run: PredictionRun | null): string[] {
   if (!run) return []
-  const lines: string[] = []
-  for (const [key, value] of Object.entries(run.inputParameters ?? {})) {
-    if (!key.startsWith("output:")) continue
-    const label = key.slice("output:".length)
-    const unit = run.inputParameters?.[`unit:${label}`]
-    lines.push(`${label}: ${value}${unit ? ` ${unit}` : ""}`)
-  }
-  if (lines.length > 0) return lines
-  if (run.summaryIc50 != null) lines.push(`IC50: ${run.summaryIc50}${run.summaryIc50Unit ? ` ${run.summaryIc50Unit}` : ""}`)
-  if (run.summaryMaximum != null) lines.push(`Maximum: ${run.summaryMaximum}${run.summaryMaximumUnit ? ` ${run.summaryMaximumUnit}` : ""}`)
-  if (run.teac) lines.push(`TEAC: ${run.teac}`)
-  if (run.selectivityIndex) lines.push(`Selectivity index: ${run.selectivityIndex}`)
-  if (lines.length > 0) return lines
+  // Prefer sanitized lines so legacy TEAC/IC50/SI/populations are not presented as assay truth.
+  const sanitized = sanitizedPredictionLines(run)
+  if (sanitized.length) return sanitized
   const points = [...run.resultPoints].sort((a, b) => a.concentration - b.concentration)
   if (points.length === 0) return []
   const metric = points[0].metric
@@ -333,6 +329,18 @@ function AssaySection({ review }: { review: AssayReview }) {
   const note = review.assay === "dpph"
     ? "T1 is the solvent control used to calculate inhibition. A derived % radical scavenging value is not applicable."
     : "T1 and T2 are the reference controls used to calculate % cytotoxicity. A derived value is not applicable."
+  const ldhSetup =
+    review.assay === "ldh"
+      ? normalizeLdhNanoparticleSetup(review.dataset?.characterization?.ldhNanoparticleSetup)
+      : null
+  const siDisplay =
+    review.assay === "ldh"
+      ? ldhSelectivityIndexDisplay({
+          setup: ldhSetup,
+          ic50Value: review.dataset?.ic50?.value,
+          ic50Method: review.dataset?.ic50?.method,
+        })
+      : null
 
   return (
     <section className="phyto-block">
@@ -349,6 +357,12 @@ function AssaySection({ review }: { review: AssayReview }) {
         <p className="nano-studies-alert" role="alert">{review.error}</p>
       ) : stats ? (
         <>
+          {review.assay === "ldh" ? (
+            <p className="dock-note" style={{ marginBottom: "0.85rem" }}>
+              Experimental setup: {ldhNanoparticleSetupSummary(ldhSetup)}
+              {siDisplay ? ` · ${siDisplay.label}: ${siDisplay.value}` : ""}
+            </p>
+          ) : null}
           <div className="assay-findings">
             <article>
               <p>Experimental finding</p>
@@ -531,23 +545,27 @@ export function AnalysisInterpretation({
   const [saveError, setSaveError] = useState<string | null>(null)
   const hydrated = useRef(false)
 
+  const studyId = activeStudy?.id ?? null
+  const labSectionsStamp = `${activeStudy?.updatedAt ?? ""}|${JSON.stringify(activeStudy?.laboratorySections ?? null)}|${JSON.stringify(activeStudy?.laboratoryOmissions ?? null)}`
+
   useEffect(() => {
-    if (!activeStudy) return
+    if (!studyId || !activeStudy) return
+    const study = activeStudy
     let cancel = false
     setLoading(true)
     setLoadError(null)
     void (async () => {
       try {
         const [datasets, predictionRows, interpretations, dockingRuns, compounds, proteins, cellLines, references, admetRuns] = await Promise.all([
-          listLabDatasets(activeStudy.id),
-          listPredictionRuns(activeStudy.id),
-          listInterpretations(activeStudy.id),
-          listDockingRuns(activeStudy.id),
-          listCompounds(activeStudy.id),
-          listProteins(activeStudy.id),
-          listCellLines(activeStudy.id),
-          listReferences(activeStudy.id),
-          listAdmetRuns(activeStudy.id),
+          listLabDatasets(study.id),
+          listPredictionRuns(study.id),
+          listInterpretations(study.id),
+          listDockingRuns(study.id),
+          listCompounds(study.id),
+          listProteins(study.id),
+          listCellLines(study.id),
+          listReferences(study.id),
+          listAdmetRuns(study.id),
         ])
         const predictions = predictionRows
         if (cancel) return
@@ -555,8 +573,8 @@ export function AnalysisInterpretation({
         const dpphDataset = latestByUpdate(datasets.filter((row) => row.assayType === "dpph" && !isSyntheticDemo(row)))
         const ldhDataset = latestByUpdate(datasets.filter((row) => row.assayType === "ldh" && !isSyntheticDemo(row)))
         const [dpphReplicates, ldhReplicates] = await Promise.all([
-          dpphDataset ? listLabReplicates(activeStudy.id, dpphDataset.id).catch(() => []) : Promise.resolve([]),
-          ldhDataset ? listLabReplicates(activeStudy.id, ldhDataset.id).catch(() => []) : Promise.resolve([]),
+          dpphDataset ? listLabReplicates(study.id, dpphDataset.id).catch(() => []) : Promise.resolve([]),
+          ldhDataset ? listLabReplicates(study.id, ldhDataset.id).catch(() => []) : Promise.resolve([]),
         ])
 
         for (const assay of ["dpph", "ldh"] as const) {
@@ -617,7 +635,7 @@ export function AnalysisInterpretation({
         setCoverageRows(PREDICTION_LAB_ENDPOINTS.map((id) => ({
           id,
           label: ENDPOINT_LABEL[id],
-          status: endpointCoverageStatus(id, datasets, activeStudy.laboratorySections, activeStudy.laboratoryOmissions),
+          status: endpointCoverageStatus(id, datasets, study.laboratorySections, study.laboratoryOmissions),
           simulation: predictions.some((run) => (run.endpoint ?? run.module) === id),
         })))
         setCharacterization(chars)
@@ -649,7 +667,8 @@ export function AnalysisInterpretation({
     return () => {
       cancel = true
     }
-  }, [activeStudy])
+    // Reload when study identity or lab coverage metadata changes — not on every activeStudy object replace.
+  }, [studyId, labSectionsStamp])
 
   const completed = stepRecordStatus("analysis", readiness) === "complete"
   const written = [fields.overall, fields.relationship, fields.limitations, fields.conclusion].filter((value) => value.trim().length > 0).length

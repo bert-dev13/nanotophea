@@ -845,6 +845,15 @@ export const StabilityResultsSchema = z.object({
 })
 export type StabilityResults = z.infer<typeof StabilityResultsSchema>
 
+/** Optional LDH experimental-setup metadata (nanoparticle include/skip). Stored with the lab dataset; not assay math. */
+export const LdhNanoparticleSetupSchema = z.object({
+  choice: z.enum(["include", "skip"]),
+  treatmentLabel: z.string().optional(),
+  nanoparticleRecordId: z.string().optional(),
+  source: z.enum(["study_record", "researcher_specified", "skipped"]),
+})
+export type LdhNanoparticleSetupRecord = z.infer<typeof LdhNanoparticleSetupSchema>
+
 export const CharacterizationPayloadSchema = z.object({
   hplc: HplcResultsSchema.optional(),
   proximate: ProximateResultsSchema.optional(),
@@ -853,6 +862,8 @@ export const CharacterizationPayloadSchema = z.object({
   sensory: SensoryResultsSchema.optional(),
   microbial: MicrobialResultsSchema.optional(),
   stability: StabilityResultsSchema.optional(),
+  /** LDH-only experimental setup; ignored by characterization assay panels. */
+  ldhNanoparticleSetup: LdhNanoparticleSetupSchema.optional(),
 })
 export type CharacterizationPayload = z.infer<typeof CharacterizationPayloadSchema>
 

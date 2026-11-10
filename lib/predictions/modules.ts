@@ -37,6 +37,13 @@ export function isHippoTarget(protein: PredictionParty): boolean {
   return /yap|hippo|tead/i.test(`${protein.name} ${protein.gene ?? ""} ${protein.pathway ?? ""}`)
 }
 
+/** Oxidative-stress proteins usable as ROS investigation context (not ROS assay subjects). */
+export function isRosOxidativeTarget(protein: PredictionParty): boolean {
+  return /keap1|nfe2l2|nrf2|nqo1|hmox1|ho-?1|sod1|catalase|\bcat\b|gpx1|nox4|oxidative|antioxidant|keap1.?nrf2/i.test(
+    `${protein.name} ${protein.gene ?? ""} ${protein.pathway ?? ""}`,
+  )
+}
+
 export function defaultModuleIncluded(
   module: PredictionEndpoint,
   compounds: PredictionParty[],

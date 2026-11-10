@@ -40,6 +40,7 @@ import {
   mapPredictionRun,
   parseJson,
 } from "@/lib/repositories/mysqlMappers"
+import { bindAcknowledgementSimulationRunId } from "@/lib/predictions/acknowledgement"
 import { writeAuditLog } from "@/lib/repositories/auditRepository"
 import {
   getCellLine,
@@ -912,8 +913,12 @@ export async function createPredictionRun(
   const id = generateDocId()
   const now = new Date().toISOString()
 
+  // Bind acknowledgement metadata to the new run id when present (no schema migration).
+  const inputParameters = bindAcknowledgementSimulationRunId(validated.inputParameters, id)
+
   const record = PredictionRunSchema.parse({
     ...validated,
+    ...(inputParameters ? { inputParameters } : {}),
     id,
     studyId,
     module: validated.endpoint,
@@ -998,33 +1003,108 @@ export async function deletePredictionRun(studyId: string, id: string, actor: Ac
   })
 }
 
+/**
+ * Updates a prediction run.
+ * - Lightweight edits: runName / notes / status only.
+ * - Scientific replacement: when methodName + source + resultPoints/inputParameters/provenance
+ *   are provided (exploratory re-run or manual import edit), replace scientific payload fields.
+ * Does not rewrite historical acknowledgement into existence unless the caller supplies it.
+ */
 export async function updatePredictionRun(
   studyId: string,
   id: string,
   actor: Actor,
-  input: Partial<PredictionRun>
+  input: Partial<PredictionRun> | PredictionRunInput
 ): Promise<PredictionRun> {
   const now = new Date().toISOString()
   const fields: string[] = ["updated_at = ?", "updated_by = ?"]
   const params: unknown[] = [now, actor.id]
 
-  if (input.runName !== undefined) {
-    fields.push("run_name = ?")
-    params.push(input.runName)
-  }
-  if (input.notes !== undefined) {
-    fields.push("notes = ?")
-    params.push(input.notes ?? null)
-  }
-  if (input.status !== undefined) {
-    fields.push("status = ?")
-    params.push(input.status)
+  const scientificReplace =
+    typeof (input as PredictionRunInput).methodName === "string" &&
+    typeof (input as PredictionRunInput).source === "string" &&
+    ((input as PredictionRunInput).resultPoints != null ||
+      (input as PredictionRunInput).inputParameters != null ||
+      (input as PredictionRunInput).provenance != null)
+
+  if (scientificReplace) {
+    const payload = input as PredictionRunInput
+    const inputParameters = bindAcknowledgementSimulationRunId(payload.inputParameters, id)
+
+    const replacements: Array<[string, unknown]> = [
+      ["run_name", payload.runName],
+      ["compound_id", payload.compoundId ?? null],
+      ["formulation_id", payload.formulationId ?? null],
+      ["cell_line_id", payload.cellLineId ?? null],
+      ["protein_id", payload.proteinId ?? null],
+      ["summary_ic50", payload.summaryIc50 ?? null],
+      ["summary_ic50_unit", payload.summaryIc50Unit ?? null],
+      ["summary_maximum", payload.summaryMaximum ?? null],
+      ["summary_maximum_unit", payload.summaryMaximumUnit ?? null],
+      ["teac", payload.teac ?? null],
+      ["selectivity_index", payload.selectivityIndex ?? null],
+      ["pathway_effect", payload.pathwayEffect ?? null],
+      ["concentration_unit_label", payload.concentrationUnitLabel ?? null],
+      ["method_name", payload.methodName],
+      ["method_version", payload.methodVersion ?? null],
+      ["method_type", payload.methodType],
+      ["source", payload.source],
+      ["reference_ids", toJson(payload.referenceIds ?? [])],
+      ["assumptions", payload.assumptions ?? null],
+      ["limitations", payload.limitations ?? null],
+      ["concentration_unit", payload.concentrationUnit],
+      ["input_parameters", toJson(inputParameters)],
+      ["date_generated", payload.dateGenerated],
+      ["operator_name", payload.operatorName ?? null],
+      ["result_points", toJson(payload.resultPoints ?? [])],
+      ["status", payload.status ?? "final"],
+      [
+        "provenance",
+        toJson(
+          defaultProvenance(payload.provenance.evidenceClass, {
+            ...payload.provenance,
+            operatorId: actor.id,
+            recordedAt: payload.provenance.recordedAt || now,
+          }),
+        ),
+      ],
+      ["notes", payload.notes ?? null],
+      ["endpoint", payload.endpoint],
+    ]
+    for (const [column, value] of replacements) {
+      fields.push(`${column} = ?`)
+      params.push(value)
+    }
+  } else {
+    if (input.runName !== undefined) {
+      fields.push("run_name = ?")
+      params.push(input.runName)
+    }
+    if (input.notes !== undefined) {
+      fields.push("notes = ?")
+      params.push(input.notes ?? null)
+    }
+    if (input.status !== undefined) {
+      fields.push("status = ?")
+      params.push(input.status)
+    }
   }
 
   params.push(studyId, id)
   await execute(`UPDATE biological_predictions SET ${fields.join(", ")} WHERE study_id = ? AND id = ?`, params)
   const updated = await getPredictionRun(studyId, id)
   if (!updated) throw new Error("Prediction run update failed")
+
+  if (scientificReplace) {
+    await writeAuditLog({
+      studyId,
+      actorId: actor.id,
+      action: "predictionRun.replaceScientific",
+      entityType: "predictionRun",
+      entityId: id,
+    })
+  }
+
   return updated
 }
 

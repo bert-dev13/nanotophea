@@ -23,6 +23,8 @@ import { ADME_PROVIDER_NAME } from "@/lib/adme/types"
 import { presentAdmeGroups } from "@/lib/insilico/admeAssessment"
 import { screenLipinski } from "@/lib/insilico/lipinski"
 import { CHARACTERIZATION_ASSAYS, getLabAssayConfig } from "@/lib/lab/labAssayConfig"
+import { sanitizedPredictionLines } from "@/lib/predictions/displaySanitization"
+import type { PredictionRun } from "@/lib/domain/models"
 import { endpointCoverageStatus, PREDICTION_LAB_ENDPOINTS } from "@/lib/lab/sections"
 import type { AdmetRun, LabReplicate } from "@/lib/domain/models"
 import { LabReplicateSchema } from "@/lib/domain/models"
@@ -69,18 +71,11 @@ function isConcentrationUnit(unit: string): boolean {
 
 export function predictionLines(row: Record<string, unknown> | undefined): string[] {
   if (!row) return []
+  const sanitized = sanitizedPredictionLines(row as PredictionRun)
+  if (sanitized.length) return sanitized
   const lines: string[] = []
-  if (row.summaryIc50 != null) {
-    lines.push(`IC50: ${row.summaryIc50} ${text(row.summaryIc50Unit) || "µM"}`)
-  }
   if (row.summaryMaximum != null) {
     lines.push(`Max: ${row.summaryMaximum} ${text(row.summaryMaximumUnit) || "%"}`)
-  }
-  if (text(row.teac)) {
-    lines.push(`TEAC: ${text(row.teac)}`)
-  }
-  if (text(row.selectivityIndex)) {
-    lines.push(`SI: ${text(row.selectivityIndex)}`)
   }
   if (text(row.pathwayEffect)) {
     lines.push(`Effect: ${text(row.pathwayEffect)}`)

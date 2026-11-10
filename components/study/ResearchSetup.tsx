@@ -1,14 +1,19 @@
 "use client"
 
-import { useRef, type KeyboardEvent } from "react"
+import { useEffect, useRef, useState, type KeyboardEvent } from "react"
 import { ArrowLeft, ArrowRight, Atom, Check, FlaskConical, Microscope, Sparkles } from "lucide-react"
 import { AskAiLink } from "@/components/ai/ask-ai-link"
 import { useStudy } from "@/components/providers/StudyProvider"
-import { LibrarySelection, type LibraryCategory } from "@/components/study/setup/LibrarySelection"
 import { PhytochemicalBrowser } from "@/components/study/setup/PhytochemicalBrowser"
 import { ProteinBrowser } from "@/components/study/setup/ProteinBrowser"
 import { CellLineBrowser } from "@/components/study/setup/CellLineBrowser"
 import { NanoparticleFormulationWorkspace } from "@/components/study/setup/NanoparticleFormulationWorkspace"
+import {
+  configuredNanoparticleSummary,
+  nanoparticleChoiceFromStudy,
+  nanoparticleChoiceLabel,
+  skippedNanoparticleSummary,
+} from "@/lib/setup/nanoparticleFormulationChoice"
 import type { StudyReadiness } from "@/lib/workflow/studyFlow"
 
 type CountKey = "compounds" | "proteins" | "cellLines" | "formulations"
@@ -53,7 +58,7 @@ const SECTIONS: SetupSection[] = [
     id: "nanoparticle",
     number: "04",
     label: "Nanoparticle Formulation",
-    hint: "Chitosan–TPP nanoparticle system",
+    hint: "Optional Chitosan–TPP nanoparticle system",
     countKey: "formulations",
     icon: Sparkles,
   },
@@ -90,18 +95,54 @@ export function ResearchSetup({
   onContinueAction,
   onChangedAction,
 }: ResearchSetupProps) {
-  const { activeStudy } = useStudy()
+  const { activeStudy, updateActiveStudy } = useStudy()
   const handleTab = onTabAction ?? (() => {})
   const handleContinue = onContinueAction ?? (() => {})
   const handleChanged = onChangedAction ?? (() => {})
+  const [navBusy, setNavBusy] = useState(false)
+  const [visited, setVisited] = useState<Record<SetupSectionId, boolean>>({
+    phytochemicals: true,
+    proteins: false,
+    "cell-line": false,
+    nanoparticle: false,
+  })
   const activeIndex = Math.max(0, SECTIONS.findIndex((section) => section.id === tab))
   const active = SECTIONS[activeIndex]
+
+  useEffect(() => {
+    setVisited((current) => (current[active.id] ? current : { ...current, [active.id]: true }))
+  }, [active.id])
   const previous = activeIndex > 0 ? SECTIONS[activeIndex - 1] : null
   const next = activeIndex < SECTIONS.length - 1 ? SECTIONS[activeIndex + 1] : null
-  const readyCount = SECTIONS.filter((section) => (readiness?.[section.countKey] ?? 0) > 0).length
-  const complete = readyCount === SECTIONS.length
-  const continueDisabled = checking || !readiness || missing.length > 0 || Boolean(checkError)
+  const requiredSections = SECTIONS.filter((section) => section.id !== "nanoparticle")
+  const readyRequired = requiredSections.filter((section) => (readiness?.[section.countKey] ?? 0) > 0).length
+  const nanoparticleStatus = nanoparticleChoiceFromStudy({
+    formulationSummary: activeStudy?.formulationSummary,
+    nanoparticleConfigured: (readiness?.formulations ?? 0) > 0,
+  })
+  const complete = readyRequired === requiredSections.length
+  const continueDisabled = checking || navBusy || !readiness || missing.length > 0 || Boolean(checkError)
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
+
+  async function continueToInSilico(options?: { markSkipped?: boolean; markConfigured?: boolean }) {
+    if (continueDisabled && !options?.markSkipped && !options?.markConfigured) return
+    if (checking || navBusy || !readiness || missing.length > 0 || Boolean(checkError)) return
+    setNavBusy(true)
+    try {
+      if (options?.markSkipped) {
+        await updateActiveStudy({ formulationSummary: skippedNanoparticleSummary() })
+        handleChanged()
+      } else if (options?.markConfigured || (readiness.formulations ?? 0) > 0) {
+        await updateActiveStudy({
+          formulationSummary: configuredNanoparticleSummary("Chitosan–TPP nanoparticle system"),
+        })
+        handleChanged()
+      }
+      handleContinue()
+    } finally {
+      setNavBusy(false)
+    }
+  }
 
   const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     if (event.key !== "ArrowRight" && event.key !== "ArrowLeft" && event.key !== "Home" && event.key !== "End") {
@@ -141,9 +182,12 @@ export function ResearchSetup({
         </div>
         <div className="nano-setup-progress" aria-live="polite">
           <ul className="nano-setup-pips" aria-hidden>
-            {SECTIONS.map((section, index) => {
+            {SECTIONS.map((section) => {
               const Icon = section.icon
-              const on = Boolean(readiness && readiness[section.countKey] > 0)
+              const on =
+                section.id === "nanoparticle"
+                  ? nanoparticleStatus !== "unresolved"
+                  : Boolean(readiness && readiness[section.countKey] > 0)
               return (
                 <li
                   key={section.id}
@@ -158,8 +202,8 @@ export function ResearchSetup({
           <p className="nano-setup-progress-value">
             {readiness ? (
               <>
-                <span key={readyCount}>{readyCount}</span>
-                <span>of {SECTIONS.length}</span>
+                <span key={readyRequired}>{readyRequired}</span>
+                <span>of {requiredSections.length} required</span>
               </>
             ) : (
               "Checking"
@@ -171,10 +215,24 @@ export function ResearchSetup({
       <div className="nano-setup-steps nano-setup-steps--rail" role="tablist" aria-label="Research setup sections">
         {SECTIONS.map((section, index) => {
           const count = readiness ? readiness[section.countKey] : null
-          const done = count !== null && count > 0
+          const done =
+            section.id === "nanoparticle"
+              ? nanoparticleStatus !== "unresolved"
+              : count !== null && count > 0
           const selected = section.id === tab
           const Icon = section.icon
-          const state = count === null ? "pending" : done ? "done" : "needed"
+          const state =
+            section.id === "nanoparticle"
+              ? count === null
+                ? "pending"
+                : done
+                  ? "done"
+                  : "needed"
+              : count === null
+                ? "pending"
+                : done
+                  ? "done"
+                  : "needed"
           return (
             <button
               key={section.id}
@@ -200,15 +258,15 @@ export function ResearchSetup({
               <span className="nano-setup-step-copy">
                 <span className="nano-setup-num">{section.number}</span>
                 <span className="nano-setup-step-label">{section.label}</span>
-                <span className="nano-setup-step-hint">{section.hint}</span>
+                <span className="nano-setup-step-hint">
+                  {section.id === "nanoparticle" ? "Optional Chitosan–TPP nanoparticle system" : section.hint}
+                </span>
               </span>
               <span className="nano-setup-step-meta">
                 {count === null
                   ? "Checking"
                   : section.id === "nanoparticle"
-                    ? done
-                      ? `${count} configured`
-                      : "Not configured"
+                    ? nanoparticleChoiceLabel(nanoparticleStatus)
                     : done
                       ? `${count} selected`
                       : "0 selected"}
@@ -218,86 +276,96 @@ export function ResearchSetup({
         })}
       </div>
 
-      {active.id === "phytochemicals" ? (
-        <section id="setup-stage" role="tabpanel" aria-labelledby={`setup-step-${active.id}`} className="nano-setup-stage">
+      {visited.phytochemicals ? (
+        <section
+          id="setup-stage-phytochemicals"
+          role="tabpanel"
+          hidden={active.id !== "phytochemicals"}
+          aria-labelledby="setup-step-phytochemicals"
+          className="nano-setup-stage"
+        >
           <PhytochemicalBrowser onChangedAction={handleChanged} onContinueAction={() => handleTab("proteins")} />
         </section>
-      ) : active.id === "proteins" ? (
-        <section id="setup-stage" role="tabpanel" aria-labelledby={`setup-step-${active.id}`} className="nano-setup-stage">
+      ) : null}
+      {visited.proteins ? (
+        <section
+          id="setup-stage-proteins"
+          role="tabpanel"
+          hidden={active.id !== "proteins"}
+          aria-labelledby="setup-step-proteins"
+          className="nano-setup-stage"
+        >
           <ProteinBrowser
             onChangedAction={handleChanged}
             onBackAction={() => handleTab("phytochemicals")}
             onContinueAction={() => handleTab("cell-line")}
           />
         </section>
-      ) : active.id === "cell-line" ? (
-        <section id="setup-stage" role="tabpanel" aria-labelledby={`setup-step-${active.id}`} className="nano-setup-stage">
+      ) : null}
+      {visited["cell-line"] ? (
+        <section
+          id="setup-stage-cell-line"
+          role="tabpanel"
+          hidden={active.id !== "cell-line"}
+          aria-labelledby="setup-step-cell-line"
+          className="nano-setup-stage"
+        >
           <CellLineBrowser
             onChangedAction={handleChanged}
             onBackAction={() => handleTab("proteins")}
-            onContinueAction={() => handleTab("nanoparticle")}
-            continueDisabled={false}
+            onContinueToNanoparticleAction={() => handleTab("nanoparticle")}
+            onContinueToInSilicoAction={() => void continueToInSilico({ markSkipped: true })}
+            continueDisabled={continueDisabled}
           />
         </section>
-      ) : active.id === "nanoparticle" ? (
-        <section id="setup-stage" role="tabpanel" aria-labelledby={`setup-step-${active.id}`} className="nano-setup-stage space-y-6">
+      ) : null}
+      {visited.nanoparticle ? (
+        <section
+          id="setup-stage-nanoparticle"
+          role="tabpanel"
+          hidden={active.id !== "nanoparticle"}
+          aria-labelledby="setup-step-nanoparticle"
+          className="nano-setup-stage space-y-6"
+        >
           <NanoparticleFormulationWorkspace
             studyId={activeStudy?.id || ""}
-            onChangedAction={handleChanged}
+            onChangedAction={() => {
+              void updateActiveStudy({
+                formulationSummary: configuredNanoparticleSummary("Chitosan–TPP nanoparticle system"),
+              }).then(() => handleChanged())
+            }}
           />
           <SetupActions
             checkError={checkError}
             readiness={readiness}
             missing={missing}
             previous={previous}
-            next={next}
-            checking={checking}
+            next={null}
+            checking={checking || navBusy}
             continueDisabled={continueDisabled}
             onTabAction={handleTab}
-            onContinueAction={handleContinue}
+            onContinueAction={() =>
+              void continueToInSilico(
+                (readiness?.formulations ?? 0) > 0 || nanoparticleStatus === "configured"
+                  ? { markConfigured: true }
+                  : { markSkipped: true },
+              )
+            }
+            continueLabel={
+              (readiness?.formulations ?? 0) > 0 || nanoparticleStatus === "configured"
+                ? "Continue to In-Silico"
+                : "Skip nanoparticle · Continue to In-Silico"
+            }
+            statusNote={
+              (readiness?.formulations ?? 0) > 0 || nanoparticleStatus === "configured"
+                ? "Nanoparticle formulation is recorded. Selected phytochemicals, proteins, and cell lines are preserved."
+                : "Nanoparticle formulation is optional. Skipping records that choice and continues to In-Silico without blocking the workflow."
+            }
             showStatus
             isBottom
           />
         </section>
-      ) : (
-        <>
-          <SetupActions
-            checkError={checkError}
-            readiness={readiness}
-            missing={missing}
-            previous={previous}
-            next={next}
-            checking={checking}
-            continueDisabled={continueDisabled}
-            onTabAction={handleTab}
-            onContinueAction={handleContinue}
-            showStatus
-          />
-
-          <section
-            id="setup-stage"
-            role="tabpanel"
-            aria-labelledby={`setup-step-${active.id}`}
-            className="nano-setup-stage nano-step-in"
-            key={tab}
-          >
-            <LibrarySelection category={active.id as LibraryCategory} onChangedAction={handleChanged} />
-          </section>
-
-          <SetupActions
-            checkError={checkError}
-            readiness={readiness}
-            missing={missing}
-            previous={previous}
-            next={next}
-            checking={checking}
-            continueDisabled={continueDisabled}
-            onTabAction={handleTab}
-            onContinueAction={handleContinue}
-            isBottom
-          />
-        </>
-      )}
+      ) : null}
     </div>
   )
 }
@@ -312,6 +380,8 @@ function SetupActions({
   continueDisabled,
   onTabAction,
   onContinueAction,
+  continueLabel = "Continue to In-Silico",
+  statusNote,
   showStatus = false,
   isBottom = false,
 }: {
@@ -324,6 +394,8 @@ function SetupActions({
   continueDisabled: boolean
   onTabAction?: (tab: string) => void
   onContinueAction?: () => void
+  continueLabel?: string
+  statusNote?: string
   showStatus?: boolean
   isBottom?: boolean
 }) {
@@ -358,7 +430,7 @@ function SetupActions({
               </ul>
             </div>
           ) : readiness ? (
-            <p role="status">All setup sections are complete.</p>
+            <p role="status">{statusNote ?? "Required setup records are ready. Nanoparticle formulation remains optional."}</p>
           ) : null}
         </div>
       ) : (
@@ -380,7 +452,7 @@ function SetupActions({
           </button>
         ) : null}
         <button type="button" className="nano-setup-continue" disabled={continueDisabled} onClick={onContinueAction}>
-          {checking ? "Checking…" : "Continue to In-Silico"}
+          {checking ? "Checking…" : continueLabel}
           <ArrowRight size={15} aria-hidden />
         </button>
       </div>

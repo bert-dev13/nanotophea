@@ -19,6 +19,11 @@ import { AskAiLink } from "@/components/ai/ask-ai-link"
 import dynamic from "next/dynamic"
 import { useStudy } from "@/components/providers/StudyProvider"
 import { EvidenceBadge } from "@/components/ui/EvidenceBadge"
+import { PhytochemicalAnalysisViewToggle } from "@/components/study/PhytochemicalAnalysisViewToggle"
+import { TeaFormulationCombinedPanel } from "@/components/study/TeaFormulationCombinedPanel"
+import { usePhytochemicalAnalysisView } from "@/components/study/usePhytochemicalAnalysisView"
+import { buildCombinedDockingResultRows } from "@/lib/phytochemicals/analysisView"
+import { readStudyUiPrefs, writeStudyUiPrefs } from "@/lib/workflow/studyUiPrefs"
 import {
   canonicalDockingPairDocId,
   type Compound,
@@ -40,10 +45,7 @@ const DockedPoseViewer = dynamic(
   { ssr: false, loading: () => <div className="h-[320px] flex items-center justify-center text-xs text-slate-400">Loading 3D docked pose…</div> }
 )
 
-const ProteinViewer3D = dynamic(
-  () => import("@/lib/mol3d").then((m) => m.ProteinViewer3D),
-  { ssr: false, loading: () => <div className="h-[320px] flex items-center justify-center text-xs text-slate-400">Loading 3D structure…</div> }
-)
+import { DeferredProteinViewer } from "@/components/study/DeferredMolecularViewer"
 import { listCompounds, listProteins } from "@/lib/repositories/researchDataRepository"
 import { getDockingRun, listAdmetRuns, listDockingOutcomes, reopenDockingPair, skipDockingPair } from "@/lib/repositories/scientificRunRepository"
 import { screenedCompoundIds } from "@/lib/adme/service"
@@ -105,6 +107,13 @@ export function DockingPairsWorkspace({
   const handleChanged = onChangedAction ?? (() => {})
   const { user, loading: authLoading } = useAuth()
   const { activeStudy, loading: studyLoading } = useStudy()
+  const studyId = activeStudy?.id ?? null
+  const activeStudyRef = useRef(activeStudy)
+  activeStudyRef.current = activeStudy
+  const { viewMode, setViewMode } = usePhytochemicalAnalysisView(studyId)
+  /** All Research Setup phytochemicals for this study (tea formulation composition). */
+  const [studyCompounds, setStudyCompounds] = useState<Compound[]>([])
+  /** Docking-eligible subset (screened). Used for pair execution only. */
   const [compounds, setCompounds] = useState<Compound[]>([])
   const [excludedCompounds, setExcludedCompounds] = useState<Compound[]>([])
   const [proteins, setProteins] = useState<Protein[]>([])
@@ -116,21 +125,31 @@ export function DockingPairsWorkspace({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [pairId, setPairId] = useState("")
-  const [query, setQuery] = useState("")
-  const [filter, setFilter] = useState<StatusFilterId>("all")
+  const uiPrefs = readStudyUiPrefs(studyId, "docking", { pairId: "", query: "", filter: "all" as StatusFilterId })
+  const [pairId, setPairId] = useState(String(uiPrefs.pairId ?? ""))
+  const [query, setQuery] = useState(String(uiPrefs.query ?? ""))
+  const [filter, setFilter] = useState<StatusFilterId>((uiPrefs.filter as StatusFilterId) || "all")
   const [mobilePane, setMobilePane] = useState<"library" | "detail">("library")
   const [showPicked, setShowPicked] = useState(false)
   const [confirmSkipId, setConfirmSkipId] = useState<string | null>(null)
+  const loadGenerationRef = useRef(0)
 
-  const load = useCallback(async () => {
-    if (authLoading || studyLoading || !user || !activeStudy) return
+  useEffect(() => {
+    writeStudyUiPrefs(studyId, "docking", { pairId, query, filter })
+  }, [studyId, pairId, query, filter])
+
+  const load = useCallback(async (options?: { soft?: boolean }) => {
+    if (authLoading || studyLoading || !user) return
+    const study = activeStudyRef.current
+    if (!study) return
+    const generation = ++loadGenerationRef.current
     setError(null)
+    if (!options?.soft) setLoading(true)
     try {
       const [compoundRows, proteinRows, outcomes, admetRuns] = await Promise.all([
-        listCompounds(activeStudy.id),
-        listProteins(activeStudy.id),
-        listDockingOutcomes(activeStudy.id).catch((err) => {
+        listCompounds(study.id),
+        listProteins(study.id),
+        listDockingOutcomes(study.id).catch((err) => {
           console.warn("[Docking] listDockingOutcomes catch:", err)
           return {
             completed: [] as DockingRun[],
@@ -140,11 +159,14 @@ export function DockingPairsWorkspace({
             pairs: [],
           }
         }),
-        listAdmetRuns(activeStudy.id).catch(() => [] as any),
+        listAdmetRuns(study.id).catch(() => [] as any),
       ])
+      if (generation !== loadGenerationRef.current) return
       const readyIds = new Set(screenedCompoundIds(compoundRows.map((c) => c.id), admetRuns))
       const eligible = compoundRows.filter((c) => readyIds.has(c.id))
       const omitted = compoundRows.filter((c) => !readyIds.has(c.id))
+      // Combined tea view must use every Research Setup selection; docking runs only the eligible subset.
+      setStudyCompounds(compoundRows)
       setCompounds(eligible.length > 0 ? eligible : compoundRows)
       setExcludedCompounds(eligible.length > 0 ? omitted : [])
       setProteins(proteinRows)
@@ -152,16 +174,17 @@ export function DockingPairsWorkspace({
       setRunsByPair(outcomes.runsByPair || {})
       setSkips(outcomes.skipped)
     } catch {
+      if (generation !== loadGenerationRef.current) return
       setError("Unable to load docking history.")
     } finally {
-      setLoading(false)
+      if (generation === loadGenerationRef.current) setLoading(false)
     }
-  }, [activeStudy, authLoading, studyLoading, user])
+  }, [authLoading, studyLoading, user, studyId])
 
   const refreshJobs = useCallback(async () => {
-    if (!activeStudy || !user) return
+    if (!studyId || !user) return
     try {
-      const response = await fetch(`/api/scientific/docking/jobs?studyId=${encodeURIComponent(activeStudy.id)}`, {
+      const response = await fetch(`/api/scientific/docking/jobs?studyId=${encodeURIComponent(studyId)}`, {
         credentials: "same-origin",
       })
       if (!response.ok) return
@@ -170,7 +193,7 @@ export function DockingPairsWorkspace({
     } catch {
       // non-fatal job polling error
     }
-  }, [activeStudy, user])
+  }, [studyId, user])
 
   const refreshEngine = useCallback(async () => {
     if (!user) return
@@ -189,10 +212,10 @@ export function DockingPairsWorkspace({
   }, [user])
 
   useEffect(() => {
-    if (!authLoading && !studyLoading && user && activeStudy) {
+    if (!authLoading && !studyLoading && user && studyId) {
       void load()
     }
-  }, [load, authLoading, studyLoading, user, activeStudy])
+  }, [load, authLoading, studyLoading, user, studyId])
 
   useEffect(() => {
     if (user) {
@@ -201,10 +224,10 @@ export function DockingPairsWorkspace({
   }, [refreshEngine, user])
 
   useEffect(() => {
-    if (user && activeStudy) {
+    if (user && studyId) {
       void refreshJobs()
     }
-  }, [refreshJobs, user, activeStudy])
+  }, [refreshJobs, user, studyId])
 
   const notifyChanged = useRef(handleChanged)
   notifyChanged.current = handleChanged
@@ -213,7 +236,7 @@ export function DockingPairsWorkspace({
     if (!activeJob) return
     const timer = setInterval(() => {
       void refreshJobs()
-        .then(() => load())
+        .then(() => load({ soft: true }))
         .then(() => notifyChanged.current())
     }, 2000)
     return () => clearInterval(timer)
@@ -361,6 +384,13 @@ export function DockingPairsWorkspace({
             </div>
             <p className="nano-setup-lead">Selected phytochemicals and targets are docked with AutoDock Vina.</p>
             <AskAiLink context="docking" />
+            {!loading && studyCompounds.length > 0 ? (
+              <PhytochemicalAnalysisViewToggle
+                mode={viewMode}
+                onChange={setViewMode}
+                compoundCount={studyCompounds.length}
+              />
+            ) : null}
           </div>
         </div>
         <div className="nano-setup-progress" aria-live="polite">
@@ -733,8 +763,59 @@ export function DockingPairsWorkspace({
               </div>
             </aside>
 
-            {/* RIGHT DETAIL: Selected Pair Detail View */}
-            {selected ? (
+            {/* RIGHT DETAIL: Individual pair or combined tea formulation */}
+            {viewMode === "combined" ? (
+              <TeaFormulationCombinedPanel
+                stageLabel="molecular docking"
+                compounds={studyCompounds.map((row) => ({
+                  id: row.id,
+                  name: row.name,
+                  pubchemCid: row.pubchemCid,
+                  formula: row.formula,
+                  chemicalClass: row.chemicalClass,
+                  smiles: row.smiles,
+                }))}
+                resultRows={buildCombinedDockingResultRows({
+                  studyCompounds: studyCompounds.map((row) => ({ id: row.id, name: row.name })),
+                  proteins: proteins.map((row) => ({ id: row.id, name: row.name, gene: row.gene })),
+                  eligibleCompoundIds: new Set(compounds.map((row) => row.id)),
+                  pairs: pairs.map((pair) => {
+                    const status = pairStatus(pair, jobFor(pair, jobs))
+                    const affinityLabel =
+                      pair.run?.bestBindingAffinityKcalMol != null && Number.isFinite(pair.run.bestBindingAffinityKcalMol)
+                        ? `${formatNumber(pair.run.bestBindingAffinityKcalMol)} kcal/mol`
+                        : status === "SKIPPED"
+                          ? "Skipped"
+                          : status === "COMPLETED"
+                            ? "Completed (affinity unavailable)"
+                            : status === "UNAVAILABLE"
+                              ? "Docking unavailable"
+                              : "Not yet docked"
+                    return {
+                      compoundId: pair.compound.id,
+                      proteinId: pair.protein.id,
+                      proteinName: pair.protein.name,
+                      proteinGene: pair.protein.gene,
+                      affinityLabel,
+                      statusLabel: status,
+                      detail: `Pair ${pair.compound.name} × ${pair.protein.name} · status ${status}`,
+                    }
+                  }),
+                })}
+                onInspectCompound={(compoundId) => {
+                  const first = pairs.find((pair) => pair.compound.id === compoundId)
+                  if (first) {
+                    setPairId(first.id)
+                    setViewMode("individual")
+                    setMobilePane("detail")
+                    return
+                  }
+                  // Unscreened formulation members are still listed; open In-Silico for that compound via individual list fallback.
+                  setViewMode("individual")
+                  setMobilePane("library")
+                }}
+              />
+            ) : selected ? (
               <PairDetail
                 key={selected.id}
                 pair={selected}
@@ -1003,9 +1084,9 @@ function PairDetail({
           {activeRun?.poseModel && (displayStructureId || pair.protein.pdbId) ? (
             <DockedPoseViewer pdbId={displayStructureId.trim()} pose={activeRun.poseModel} searchBox={activeRun.searchBox} />
           ) : isLats1 ? (
-            <ProteinViewer3D key="LATS1_AF" pdbId="LATS1_AF" name={pair.protein.name} height={320} quiet />
+            <DeferredProteinViewer key="LATS1_AF" pdbId="LATS1_AF" name={pair.protein.name} height={320} quiet />
           ) : pair.protein.pdbId ? (
-            <ProteinViewer3D key={pair.protein.pdbId} pdbId={pair.protein.pdbId} name={pair.protein.name} height={320} quiet />
+            <DeferredProteinViewer key={pair.protein.pdbId} pdbId={pair.protein.pdbId} name={pair.protein.name} height={320} quiet />
           ) : (
             <p className="phyto-missing">This pair has no 3D structure available.</p>
           )}

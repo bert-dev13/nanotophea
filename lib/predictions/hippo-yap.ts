@@ -2,16 +2,16 @@ import type { EndpointSpec } from "@/lib/predictions/types"
 
 export const hippoYapSpec: EndpointSpec = {
   endpoint: "hippo_yap",
-  label: "Hippo–YAP Signaling",
+  label: "Hippo–YAP (exploratory)",
   outputLabels: [
-    "YAP1 suppression",
-    "p-YAP Ser127",
-    "LATS1 activation",
-    "TEAD4 effects",
-    "Nuclear YAP1",
-    "Pathway interpretation",
+    "YAP–TEAD residual activity proxy (% at 250 µg/mL)",
+    "Estimated YAP suppression proxy (% at 250 µg/mL)",
+    "p-YAP Ser127 proxy (score, not measured phosphorylation)",
+    "Nuclear YAP residual proxy (%, not localization microscopy)",
+    "TEAD transcriptional proxy (% at 250 µg/mL)",
   ],
-  context: "Hippo–YAP pathway prediction for a selected phytochemical and YAP/Hippo target.",
+  context:
+    "Exploratory SIMULATION of Hippo–YAP / YAP–TEAD pathway proxies from compound–target identity and optional docking affinity as a pathway-engagement cue. Proxies are not measured phosphorylation, nuclear localization, or reporter-assay readouts. Not Western blot or qPCR. No validated pathway model is registered.",
 }
 
 export const hippoYapModel = null

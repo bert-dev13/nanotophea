@@ -71,7 +71,11 @@ export interface PredictionModel {
 export interface EndpointSpec {
   endpoint: PredictionEndpoint
   label: string
-  /** Names a validated model would be expected to report. Not values. */
+  /**
+   * Names of outputs the current registered path may produce.
+   * When no validated model is registered, these describe exploratory-simulation
+   * outputs only — never experimental assay measurements.
+   */
   outputLabels: string[]
   context: string
 }

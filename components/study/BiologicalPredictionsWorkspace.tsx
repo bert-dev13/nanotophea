@@ -25,6 +25,10 @@ import { AskAiLink } from "@/components/ai/ask-ai-link"
 import { assistantFocusId } from "@/lib/ai/focus"
 import { useStudy } from "@/components/providers/StudyProvider"
 import { EvidenceBadge } from "@/components/ui/EvidenceBadge"
+import {
+  PredictionEvidenceClassification,
+  predictionEvidenceBadgeType,
+} from "@/components/study/PredictionEvidenceClassification"
 import type {
   AdmetRun,
   CellLineRecord,
@@ -52,12 +56,25 @@ import {
   type PredictionJobStatus,
   type PredictionSubject,
 } from "@/lib/predictions/modules"
+import type { ExploratoryAcknowledgementRecord } from "@/lib/predictions/acknowledgement"
+import {
+  assertAcknowledgementActorIsServer,
+  readAcknowledgementFromParameters,
+} from "@/lib/predictions/acknowledgement"
+import { sanitizePredictionDisplay } from "@/lib/predictions/displaySanitization"
 import type { PrototypePredictionResult } from "@/lib/predictions/prototype/types"
+import {
+  buildRosOxidativeTargetSelections,
+  readRosOxidativeTargetKeysFromParameters,
+  resolveRosOxidativeTargetViews,
+} from "@/lib/predictions/rosOxidativeTargets"
 import { storedSimulationFromPrototype } from "@/lib/predictions/store"
 import type { PredictionFeatures, PredictionSeriesPoint } from "@/lib/predictions/types"
 import { publicationLabel, type PubMedPaper } from "@/lib/scientific/pubmed"
 import { listCellLines, listCompounds, listProteins } from "@/lib/repositories/researchDataRepository"
 import { createPredictionRun, listAdmetRuns, listDockingOutcomes, listPredictionRuns, updatePredictionRun } from "@/lib/repositories/scientificRunRepository"
+import { RosOxidativeTargetPicker } from "@/components/study/RosOxidativeTargetPicker"
+import { readStudyUiPrefs, writeStudyUiPrefs } from "@/lib/workflow/studyUiPrefs"
 
 export interface BiologicalPredictionJob {
   key: string
@@ -96,12 +113,12 @@ const ENDPOINT_TONES: Record<PredictionEndpoint, string> = {
 }
 
 const HERO: Record<PredictionEndpoint, string> = {
-  dpph: "DPPH Antioxidant Prediction",
-  mtt: "MTT Cytotoxicity Prediction",
-  ldh: "LDH Cytotoxicity Prediction",
-  ros: "ROS Oxidative Stress Prediction",
-  bax: "BAX-mediated Apoptosis Prediction",
-  hippo_yap: "Hippo–YAP Signaling Prediction",
+  dpph: "DPPH Antioxidant (exploratory simulation)",
+  mtt: "MTT Metabolic Viability (exploratory simulation)",
+  ldh: "LDH Membrane-Damage Index (exploratory simulation)",
+  ros: "ROS Oxidative-Stress Index (exploratory simulation)",
+  bax: "BAX-Target Context (exploratory simulation)",
+  hippo_yap: "Hippo–YAP Pathway Proxies (exploratory simulation)",
 }
 
 function predictionJobKey(endpoint: PredictionEndpoint, subject: PredictionSubject): string {
@@ -120,7 +137,12 @@ function featuresForSubject(
   proteins: Protein[],
   docking: DockingRun[],
   admet: AdmetRun[],
+  endpoint?: PredictionEndpoint,
 ) {
+  // Only Hippo–YAP uses docking as an explicit pathway-engagement proxy.
+  // DPPH / MTT / LDH / ROS / BAX must not receive docking affinities as assay drivers.
+  const includeDocking = endpoint === "hippo_yap"
+  const includeProteins = endpoint === "hippo_yap" || endpoint === "bax"
   return assembleFeatures({
     studyId,
     compound: {
@@ -131,16 +153,24 @@ function featuresForSubject(
       formula: compound?.formula,
     },
     cellLine: subject.cellLineId && subject.cellLineName ? { id: subject.cellLineId, name: subject.cellLineName } : undefined,
-    proteins: proteins
-      .filter((protein) => !subject.proteinId || protein.id === subject.proteinId)
-      .map((protein) => ({ id: protein.id, name: protein.name })),
-    docking: docking
-      .filter((row) => row.compoundId === subject.compoundId && (!subject.proteinId || row.proteinId === subject.proteinId))
-      .map((row) => ({
-        proteinId: row.proteinId,
-        proteinName: proteins.find((protein) => protein.id === row.proteinId)?.name,
-        affinityKcalMol: row.bestBindingAffinityKcalMol,
-      })),
+    proteins: includeProteins
+      ? proteins
+          .filter((protein) => !subject.proteinId || protein.id === subject.proteinId)
+          .map((protein) => ({ id: protein.id, name: protein.name }))
+      : endpoint === "dpph"
+        ? []
+        : subject.proteinId
+          ? [{ id: subject.proteinId, name: subject.proteinName ?? subject.proteinId }]
+          : [],
+    docking: includeDocking
+      ? docking
+          .filter((row) => row.compoundId === subject.compoundId && (!subject.proteinId || row.proteinId === subject.proteinId))
+          .map((row) => ({
+            proteinId: row.proteinId,
+            proteinName: proteins.find((protein) => protein.id === row.proteinId)?.name,
+            affinityKcalMol: row.bestBindingAffinityKcalMol,
+          }))
+      : [],
     admeDescriptors: admet.find((row) => row.compoundId === subject.compoundId)?.descriptors,
   })
 }
@@ -155,20 +185,123 @@ async function executePrediction(input: {
   docking: DockingRun[]
   admet: AdmetRun[]
   existing?: PredictionRun
+  /** ROS investigation context only — never fed into simulateRos features. */
+  rosOxidativeTargetKeys?: string[]
 }): Promise<void> {
-  const features = featuresForSubject(input.studyId, input.subject, input.compound, input.proteins, input.docking, input.admet)
+  const features = featuresForSubject(
+    input.studyId,
+    input.subject,
+    input.compound,
+    input.proteins,
+    input.docking,
+    input.admet,
+    input.endpoint,
+  )
   const response = await fetch("/api/scientific/predictions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ endpoint: input.endpoint, features, mode: "prototype" }),
+    body: JSON.stringify({
+      studyId: input.studyId,
+      endpoint: input.endpoint,
+      features,
+      mode: "exploratory_simulation",
+      acknowledgeExploratory: true,
+    }),
   })
-  const body = (await response.json()) as PrototypePredictionResult & { error?: string }
-  if (!response.ok || body.evidenceClass !== "SIMULATION") {
-    throw new Error(body.error || "The prediction could not be generated.")
+  const body = (await response.json()) as {
+    endpoint?: string
+    evidenceClass?: string
+    error?: string
+    reason?: string
+    message?: string
+    status?: string
+    series?: PrototypePredictionResult["series"]
+    outputs?: PrototypePredictionResult["outputs"]
+    modelName?: string
+    modelVersion?: string
+    method?: string
+    assumptions?: string
+    note?: string
+    generatedAt?: string
+    inputFeatures?: string[]
+    units?: Record<string, string>
+    acknowledgement?: ExploratoryAcknowledgementRecord
+    acknowledgedByServer?: string
   }
-  const stored = storedSimulationFromPrototype(body, features)
-  if (input.existing) await updatePredictionRun(input.studyId, input.existing.id, { id: input.actorId }, stored)
-  else await createPredictionRun(input.studyId, { id: input.actorId }, stored)
+  if (response.status === 401) {
+    throw new Error(body.error || "Sign in to run exploratory simulations.")
+  }
+  if (response.status === 403) {
+    throw new Error(body.error || "You do not have access to this study.")
+  }
+  if (response.status === 422 || body.status === "unavailable") {
+    throw new Error(body.reason || body.error || "Insufficient data for a scientifically defensible simulation.")
+  }
+  if (!response.ok || body.evidenceClass !== "SIMULATION" || body.status === "acknowledgement_required") {
+    throw new Error(body.error || body.message || "The exploratory simulation could not be generated.")
+  }
+  if (body.endpoint !== input.endpoint) {
+    throw new Error("Prediction endpoint mismatch — result was not stored.")
+  }
+  if (!Array.isArray(body.series) || !body.outputs || !body.modelName || !body.method || !body.assumptions) {
+    throw new Error("Incomplete exploratory simulation payload — nothing was stored.")
+  }
+  if (!body.acknowledgement?.acknowledgedExploratory || !body.acknowledgement.acknowledgedBy) {
+    throw new Error("Server acknowledgement was missing — exploratory run was not stored.")
+  }
+  // Never trust a client-invented actor for consent audit; use server stamp only.
+  const acknowledgement: ExploratoryAcknowledgementRecord = {
+    ...body.acknowledgement,
+    acknowledgedBy: body.acknowledgedByServer || body.acknowledgement.acknowledgedBy,
+  }
+  assertAcknowledgementActorIsServer(acknowledgement, body.acknowledgedByServer || acknowledgement.acknowledgedBy)
+  const simulation: PrototypePredictionResult = {
+    endpoint: body.endpoint as PrototypePredictionResult["endpoint"],
+    modelName: body.modelName,
+    modelVersion: (body.modelVersion as PrototypePredictionResult["modelVersion"]) || "exploratory-v1",
+    method: "Exploratory simulation",
+    status: "ok",
+    outputs: body.outputs,
+    units: body.units ?? {},
+    inputFeatures: body.inputFeatures ?? [],
+    generatedAt: body.generatedAt || new Date().toISOString(),
+    evidenceClass: "SIMULATION",
+    assumptions: body.assumptions,
+    series: body.series,
+    ...(body.note ? { note: body.note } : {}),
+  }
+  const rosSelections =
+    input.endpoint === "ros"
+      ? buildRosOxidativeTargetSelections(
+          resolveRosOxidativeTargetViews({
+            selectedKeys: input.rosOxidativeTargetKeys ?? [],
+            proteins: input.proteins,
+            docking: input.docking,
+            compoundId: input.subject.compoundId,
+          }),
+        )
+      : undefined
+  const stored = storedSimulationFromPrototype(simulation, features, {
+    proteinId: input.subject.proteinId,
+    cellLineId: input.subject.cellLineId,
+    acknowledgement,
+    ...(rosSelections ? { rosOxidativeTargets: rosSelections } : {}),
+  })
+  if (stored.endpoint !== input.endpoint) {
+    throw new Error("Stored prediction endpoint mismatch.")
+  }
+  // Persist with the authenticated workspace user; acknowledgement actor is the server stamp in input_parameters.
+  // Re-runs must replace the scientific payload (updatePredictionRun scientific-replace path), not notes-only.
+  try {
+    if (input.existing) await updatePredictionRun(input.studyId, input.existing.id, { id: input.actorId }, stored)
+    else await createPredictionRun(input.studyId, { id: input.actorId }, stored)
+  } catch (error) {
+    throw new Error(
+      error instanceof Error
+        ? `Exploratory simulation was computed but not saved: ${error.message}`
+        : "Exploratory simulation was computed but not saved.",
+    )
+  }
 }
 
 export interface BiologicalPredictionsWorkspaceProps {
@@ -219,6 +352,9 @@ export function BiologicalPredictionsWorkspace({
 
   const { user } = useAuth()
   const { activeStudy } = useStudy()
+  const studyId = activeStudy?.id ?? null
+  const activeStudyRef = useRef(activeStudy)
+  activeStudyRef.current = activeStudy
   const [compounds, setCompounds] = useState<Compound[]>([])
   const [proteins, setProteins] = useState<Protein[]>([])
   const [cellLines, setCellLines] = useState<CellLineRecord[]>([])
@@ -228,29 +364,48 @@ export function BiologicalPredictionsWorkspace({
   const [admet, setAdmet] = useState<AdmetRun[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [selectedJobKey, setSelectedJobKey] = useState<string>("")
-  const [query, setQuery] = useState("")
-  const [filter, setFilter] = useState<StatusFilterId>("all")
+  const predictionUi = readStudyUiPrefs(studyId, "predictions", {
+    selectedJobKey: "",
+    query: "",
+    filter: "all" as StatusFilterId,
+  })
+  const [selectedJobKey, setSelectedJobKey] = useState(String(predictionUi.selectedJobKey ?? ""))
+  const [query, setQuery] = useState(String(predictionUi.query ?? ""))
+  const [filter, setFilter] = useState<StatusFilterId>((predictionUi.filter as StatusFilterId) || "all")
   const [mobilePane, setMobilePane] = useState<"library" | "detail">("library")
   const [runningKey, setRunningKey] = useState<string | null>(null)
+  const [pendingConfirmJobs, setPendingConfirmJobs] = useState<BiologicalPredictionJob[] | null>(null)
   const [queuedKeys, setQueuedKeys] = useState<Set<string>>(new Set())
   const [batch, setBatch] = useState<{ done: number; total: number; label: string } | null>(null)
   const [failures, setFailures] = useState<Record<string, string>>({})
+  /** Per ROS subject key → selected oxidative-stress target keys (config + traceability). */
+  const [rosTargetKeysBySubject, setRosTargetKeysBySubject] = useState<Record<string, string[]>>({})
   const runningRef = useRef(false)
+  const loadGenerationRef = useRef(0)
 
-  const load = useCallback(async () => {
-    if (!activeStudy) return
-    setLoading(true)
+  useEffect(() => {
+    writeStudyUiPrefs(studyId, "predictions", { selectedJobKey, query, filter })
+  }, [studyId, selectedJobKey, query, filter])
+
+  const load = useCallback(async (options?: { soft?: boolean }) => {
+    const study = activeStudyRef.current
+    const generation = ++loadGenerationRef.current
+    if (!study) {
+      setLoading(false)
+      return
+    }
+    if (!options?.soft) setLoading(true)
     setError(null)
     try {
       const [compoundRows, proteinRows, lineRows, predictionRows, dockingRows, admetRows] = await Promise.all([
-        listCompounds(activeStudy.id),
-        listProteins(activeStudy.id),
-        listCellLines(activeStudy.id),
-        listPredictionRuns(activeStudy.id).catch(() => [] as PredictionRun[]),
-        listDockingOutcomes(activeStudy.id).catch(() => ({ completed: [] as DockingRun[], skipped: [] as SkippedDockingPair[] })),
-        listAdmetRuns(activeStudy.id).catch(() => [] as AdmetRun[]),
+        listCompounds(study.id),
+        listProteins(study.id),
+        listCellLines(study.id),
+        listPredictionRuns(study.id).catch(() => [] as PredictionRun[]),
+        listDockingOutcomes(study.id).catch(() => ({ completed: [] as DockingRun[], skipped: [] as SkippedDockingPair[] })),
+        listAdmetRuns(study.id).catch(() => [] as AdmetRun[]),
       ])
+      if (generation !== loadGenerationRef.current) return
       setCompounds(compoundRows)
       setProteins(proteinRows)
       setCellLines(lineRows)
@@ -259,11 +414,12 @@ export function BiologicalPredictionsWorkspace({
       setSkippedDocking(dockingRows.skipped)
       setAdmet(admetRows)
     } catch (e) {
+      if (generation !== loadGenerationRef.current) return
       setError(toUserFacingError(e, "Biological predictions could not be loaded."))
     } finally {
-      setLoading(false)
+      if (generation === loadGenerationRef.current) setLoading(false)
     }
-  }, [activeStudy])
+  }, [studyId])
 
   useEffect(() => {
     void load()
@@ -337,14 +493,23 @@ export function BiologicalPredictionsWorkspace({
   }, [selectedJob, selectedJobKey])
 
   const refreshRuns = useCallback(async () => {
-    if (!activeStudy) return
-    const updated = await listPredictionRuns(activeStudy.id).catch(() => [] as PredictionRun[])
+    if (!studyId) return
+    const updated = await listPredictionRuns(studyId).catch(() => [] as PredictionRun[])
     setRuns(updated)
-  }, [activeStudy])
+  }, [studyId])
+
+  function requestExploratoryRun(jobsToRun: BiologicalPredictionJob[]) {
+    if (!user) {
+      setError("Sign in to run an exploratory simulation.")
+      return
+    }
+    if (!activeStudy || runningRef.current || jobsToRun.length === 0) return
+    setPendingConfirmJobs(jobsToRun)
+  }
 
   async function runJobs(jobsToRun: BiologicalPredictionJob[]) {
     if (!activeStudy || !user || runningRef.current || jobsToRun.length === 0) {
-      if (!user) setError("Sign in to run a prediction.")
+      if (!user) setError("Sign in to run an exploratory simulation.")
       return
     }
     runningRef.current = true
@@ -369,6 +534,13 @@ export function BiologicalPredictionsWorkspace({
         )
 
         try {
+          const rosKeys =
+            job.endpoint === "ros"
+              ? rosTargetKeysBySubject[job.subject.key] ??
+                readRosOxidativeTargetKeysFromParameters(
+                  runs.find((run) => run.endpoint === "ros" && runMatchesSubject(run, job.subject))?.inputParameters,
+                )
+              : undefined
           await executePrediction({
             studyId: activeStudy.id,
             actorId: user.uid,
@@ -379,6 +551,7 @@ export function BiologicalPredictionsWorkspace({
             docking,
             admet,
             existing: runs.find((run) => run.endpoint === job.endpoint && runMatchesSubject(run, job.subject)),
+            ...(rosKeys ? { rosOxidativeTargetKeys: rosKeys } : job.endpoint === "ros" ? { rosOxidativeTargetKeys: [] } : {}),
           })
           setFailures((current) => {
             if (!current[job.key]) return current
@@ -402,16 +575,16 @@ export function BiologicalPredictionsWorkspace({
     }
   }
 
-  async function runAllReady() {
+  function runAllReady() {
     const readyJobs = allJobs.filter((j) => getJobStatus(j) === "READY")
     if (!readyJobs.length) return
-    await runJobs(readyJobs)
+    requestExploratoryRun(readyJobs)
   }
 
-  async function retryAllFailed() {
+  function retryAllFailed() {
     const failedJobs = allJobs.filter((j) => getJobStatus(j) === "FAILED")
     if (!failedJobs.length) return
-    await runJobs(failedJobs)
+    requestExploratoryRun(failedJobs)
   }
 
   return (
@@ -607,7 +780,7 @@ export function BiologicalPredictionsWorkspace({
                   <button
                     type="button"
                     disabled={runningRef.current || queuedKeys.size > 0}
-                    onClick={() => void runAllReady()}
+                    onClick={() => runAllReady()}
                     style={{
                       background: "rgba(20, 184, 166, 0.16)",
                       border: "1px solid rgba(45, 212, 191, 0.4)",
@@ -623,13 +796,13 @@ export function BiologicalPredictionsWorkspace({
                     }}
                   >
                     <Play size={11} aria-hidden />
-                    {runningRef.current || queuedKeys.size > 0 ? "Running..." : `Run All Ready (${readyCount})`}
+                    {runningRef.current || queuedKeys.size > 0 ? "Running..." : `Simulate All Ready (${readyCount})`}
                   </button>
                 ) : failedCount > 0 ? (
                   <button
                     type="button"
                     disabled={runningRef.current || queuedKeys.size > 0}
-                    onClick={() => void retryAllFailed()}
+                    onClick={() => retryAllFailed()}
                     style={{
                       background: "rgba(244, 63, 94, 0.12)",
                       border: "1px solid rgba(244, 63, 94, 0.35)",
@@ -763,7 +936,7 @@ export function BiologicalPredictionsWorkspace({
                           title="Retry prediction"
                           onClick={(e) => {
                             e.stopPropagation()
-                            void runJobs([job])
+                            requestExploratoryRun([job])
                           }}
                           style={{
                             padding: "4px 8px",
@@ -813,7 +986,7 @@ export function BiologicalPredictionsWorkspace({
               </div>
             </aside>
 
-            {/* RIGHT DETAIL: Selected Subject Detail View */}
+            {/* RIGHT DETAIL: Individual phytochemical assay view */}
             {selectedJob && activeStudy ? (
               <SubjectPrediction
                 key={selectedJob.key}
@@ -831,7 +1004,23 @@ export function BiologicalPredictionsWorkspace({
                 queued={getJobStatus(selectedJob) === "QUEUED"}
                 runError={failures[selectedJob.key] ?? null}
                 batch={batch}
-                onRun={() => void runJobs([selectedJob])}
+                rosOxidativeTargetKeys={
+                  selectedJob.endpoint === "ros"
+                    ? (rosTargetKeysBySubject[selectedJob.subject.key] ??
+                      readRosOxidativeTargetKeysFromParameters(
+                        runs.find(
+                          (row) => row.endpoint === "ros" && runMatchesSubject(row, selectedJob.subject),
+                        )?.inputParameters,
+                      ))
+                    : []
+                }
+                onRosOxidativeTargetsChange={(keys) => {
+                  setRosTargetKeysBySubject((current) => ({
+                    ...current,
+                    [selectedJob.subject.key]: keys,
+                  }))
+                }}
+                onRun={() => requestExploratoryRun([selectedJob])}
                 onLibrary={() => setMobilePane("library")}
               />
             ) : null}
@@ -872,6 +1061,78 @@ export function BiologicalPredictionsWorkspace({
           {missing[0]}
         </p>
       ) : null}
+
+      {pendingConfirmJobs ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="exploratory-sim-title"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 80,
+            background: "rgba(15, 23, 42, 0.55)",
+            display: "grid",
+            placeItems: "center",
+            padding: "1rem",
+          }}
+        >
+          <div
+            style={{
+              width: "min(520px, 100%)",
+              background: "var(--card, #fff)",
+              color: "var(--card-foreground, #0f172a)",
+              borderRadius: "12px",
+              border: "1px solid var(--border, #e2e8f0)",
+              padding: "1.1rem 1.2rem",
+              boxShadow: "0 20px 50px rgba(15, 23, 42, 0.25)",
+            }}
+          >
+            <p
+              id="exploratory-sim-title"
+              style={{ margin: 0, fontSize: "11px", letterSpacing: "0.08em", textTransform: "uppercase", color: "#c2410c", fontWeight: 700 }}
+            >
+              Exploratory simulation — not a validated prediction
+            </p>
+            <h3 style={{ margin: "0.45rem 0 0.55rem", fontSize: "1.05rem" }}>
+              Run {pendingConfirmJobs.length === 1 ? "this" : `${pendingConfirmJobs.length}`} exploratory simulation
+              {pendingConfirmJobs.length === 1 ? "" : "s"}?
+            </h3>
+            <p style={{ margin: 0, fontSize: "13px", lineHeight: 1.5, color: "#475569" }}>
+              No validated computational model is registered for these endpoints. Results will be stored as{" "}
+              <strong>SIMULATION</strong> from identity-based demonstration curves. They are not experimental
+              measurements, not Trolox TEAC, not fitted IC50 values, not absorbance/OD, and not flow-cytometry
+              populations. Hippo–YAP may use docking only as a labeled pathway proxy.
+            </p>
+            <ul style={{ margin: "0.75rem 0 0", paddingLeft: "1.1rem", fontSize: "12px", color: "#64748b" }}>
+              {pendingConfirmJobs.slice(0, 6).map((job) => (
+                <li key={job.key}>{predictionJobLabel(job.endpoint, job.subject)}</li>
+              ))}
+              {pendingConfirmJobs.length > 6 ? <li>…and {pendingConfirmJobs.length - 6} more</li> : null}
+            </ul>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", marginTop: "1rem" }}>
+              <button
+                type="button"
+                className="phyto-back"
+                onClick={() => setPendingConfirmJobs(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="phyto-continue"
+                onClick={() => {
+                  const jobs = pendingConfirmJobs
+                  setPendingConfirmJobs(null)
+                  void runJobs(jobs)
+                }}
+              >
+                I understand — run exploratory simulation
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -891,6 +1152,8 @@ function SubjectPrediction({
   queued = false,
   runError,
   batch,
+  rosOxidativeTargetKeys = [],
+  onRosOxidativeTargetsChange,
   onRun,
   onLibrary,
 }: {
@@ -908,16 +1171,21 @@ function SubjectPrediction({
   queued?: boolean
   runError: string | null
   batch: { done: number; total: number; label: string } | null
+  rosOxidativeTargetKeys?: string[]
+  onRosOxidativeTargetsChange?: (keys: string[]) => void
   onRun: () => void
   onLibrary: () => void
 }) {
   const spec = ENDPOINT_SPECS[endpoint]
-  const features = featuresForSubject(studyId, subject, compound, proteins, docking, admet)
+  const features = featuresForSubject(studyId, subject, compound, proteins, docking, admet, endpoint)
   const search = literatureSearch(endpoint, subject.compoundName, literatureCellLine)
-  const validated = run && run.provenance?.evidenceClass !== "SIMULATION" ? run : null
-
   const isCompletedWithValidResult = canShowScientificEvidence(run, { running, runError })
-  const outputs = isCompletedWithValidResult ? simulationOutputs(run) : []
+  const evidenceBadge = predictionEvidenceBadgeType(endpoint, isCompletedWithValidResult ? run : null)
+  const display = isCompletedWithValidResult ? sanitizePredictionDisplay(run) : null
+  const outputs = display ? display.primary.map((row) => ({ label: row.label, value: row.value })) : []
+  const legacyOutputs = display ? display.legacy.map((row) => ({ label: row.label, value: row.value })) : []
+  const legacyWarning = display?.legacyWarning ?? null
+  const provenanceWarning = display?.provenanceWarning ?? null
   const series =
     isCompletedWithValidResult && run?.resultPoints
       ? run.resultPoints.map((point) => ({
@@ -930,8 +1198,13 @@ function SubjectPrediction({
       : []
   const chart = chartable(series)
   const primaryMetric = isCompletedWithValidResult ? primaryMetricHighlight(run) : undefined
+  const metricCards = prioritizeAssayOutputs(endpoint, outputs)
   const isHippoYap = endpoint === "hippo_yap"
   const isBax = endpoint === "bax"
+  const isDpph = endpoint === "dpph"
+  const isMtt = endpoint === "mtt"
+  const isLdh = endpoint === "ldh"
+  const isRos = endpoint === "ros"
 
   return (
     <article className="phyto-detail">
@@ -952,7 +1225,11 @@ function SubjectPrediction({
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
-          {isCompletedWithValidResult ? <EvidenceBadge type="PREDICTED" /> : null}
+          {evidenceBadge && evidenceBadge !== "NOT_AVAILABLE" ? (
+            <EvidenceBadge type={evidenceBadge} />
+          ) : evidenceBadge === "NOT_AVAILABLE" ? (
+            <span className="prediction-evidence-hero-na">NOT AVAILABLE</span>
+          ) : null}
 
           <button
             type="button"
@@ -979,19 +1256,20 @@ function SubjectPrediction({
             ) : runError ? (
               <>
                 <RotateCcw size={14} aria-hidden />
-                Retry Prediction
+                Retry exploratory simulation
               </>
             ) : (
               <>
                 <Play size={14} aria-hidden />
-                Run Prediction
+                Run exploratory simulation
               </>
             )}
           </button>
         </div>
       </header>
 
-      {/* Special Pathway Context Notices matching LATS1 / YAP1 in Docking */}
+      <PredictionEvidenceClassification endpoint={endpoint} run={run} />
+
       {isHippoYap ? (
         <div
           style={{
@@ -1014,11 +1292,173 @@ function SubjectPrediction({
               marginBottom: "0.2rem",
             }}
           >
-            Hippo–YAP Signaling Interface (TEAD1 / YAP1)
+            Hippo–YAP pathway proxies (exploratory)
           </strong>
-          Simulation evaluates modulation of the YAP–TEAD transcriptional regulatory complex, predicting downstream
-          cellular signaling suppression and target gene inhibition.
+          YAP–TEAD residual activity and related proxies use the selected Hippo-related docking context as an exploratory
+          engagement signal — not Western blot, qPCR, microscopy, or DPPH scavenging.
         </div>
+      ) : null}
+
+      {isDpph ? (
+        <div
+          style={{
+            marginTop: "0.85rem",
+            padding: "0.75rem 0.9rem",
+            borderRadius: "8px",
+            background: "#f0fdf4",
+            border: "1px solid #bbf7d0",
+            color: "#166534",
+            fontSize: "13px",
+          }}
+        >
+          <strong
+            style={{
+              display: "block",
+              color: "#14532d",
+              fontSize: "11px",
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              marginBottom: "0.2rem",
+            }}
+          >
+            DPPH radical-scavenging (exploratory, µM)
+          </strong>
+          Compound-level demonstration on the in-silico µM grid. Docking is not used. Hill midpoint ≠ fitted IC50. Maximum
+          response ratio ≠ Trolox TEAC. Experimental DPPH (µg/mL) is recorded separately in Laboratory.
+        </div>
+      ) : null}
+
+      {isMtt ? (
+        <div
+          style={{
+            marginTop: "0.85rem",
+            padding: "0.75rem 0.9rem",
+            borderRadius: "8px",
+            background: "#fdf4ff",
+            border: "1px solid #e9d5ff",
+            color: "#6b21a8",
+            fontSize: "13px",
+          }}
+        >
+          <strong
+            style={{
+              display: "block",
+              color: "#581c87",
+              fontSize: "11px",
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              marginBottom: "0.2rem",
+            }}
+          >
+            MTT metabolic viability (exploratory)
+          </strong>
+          Reflects an exploratory metabolic-viability index for compound × cell line identity. Not definitive cell death.
+          No selectivity index without paired normal/cancer IC50 data. Docking is not used.
+        </div>
+      ) : null}
+
+      {isLdh ? (
+        <div
+          style={{
+            marginTop: "0.85rem",
+            padding: "0.75rem 0.9rem",
+            borderRadius: "8px",
+            background: "#fff1f2",
+            border: "1px solid #fecdd3",
+            color: "#9f1239",
+            fontSize: "13px",
+          }}
+        >
+          <strong
+            style={{
+              display: "block",
+              color: "#881337",
+              fontSize: "11px",
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              marginBottom: "0.2rem",
+            }}
+          >
+            LDH membrane-damage index (exploratory)
+          </strong>
+          No spectrophotometer OD is invented here. Experimental LDH % cytotoxicity requires sample, spontaneous, and
+          maximum-release controls in Laboratory.
+        </div>
+      ) : null}
+
+      {isRos ? (
+        <div
+          style={{
+            marginTop: "0.85rem",
+            padding: "0.75rem 0.9rem",
+            borderRadius: "8px",
+            background: "#fffbeb",
+            border: "1px solid #fde68a",
+            color: "#92400e",
+            fontSize: "13px",
+          }}
+        >
+          <strong
+            style={{
+              display: "block",
+              color: "#78350f",
+              fontSize: "11px",
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              marginBottom: "0.2rem",
+            }}
+          >
+            ROS oxidative-stress index (exploratory)
+          </strong>
+          Relative index only — not DCFH fluorescence and not mitochondrial ΔΨm. Distinct from chemical DPPH scavenging.
+          Docking affinities are excluded from the ROS index. Optional oxidative-stress protein targets below are
+          investigation context only — not experimentally measured biomarkers.
+        </div>
+      ) : null}
+
+      {isRos ? (
+        <RosOxidativeTargetPicker
+          selectedKeys={rosOxidativeTargetKeys}
+          onChange={(keys) => onRosOxidativeTargetsChange?.(keys)}
+          proteins={proteins}
+          docking={docking}
+          compoundId={subject.compoundId}
+          disabled={running || queued}
+        />
+      ) : null}
+
+      {isRos && isCompletedWithValidResult ? (
+        <section className="phyto-block" style={{ marginTop: "0.85rem" }}>
+          <h3>Recorded oxidative-stress targets</h3>
+          <p className="phyto-caption">
+            Targets preserved with this ROS run for study traceability. They did not drive the exploratory ROS index.
+          </p>
+          {(() => {
+            const storedKeys = readRosOxidativeTargetKeysFromParameters(run?.inputParameters)
+            if (!storedKeys.length) {
+              return <p className="dock-note">No oxidative-stress protein targets were selected for this run.</p>
+            }
+            const views = resolveRosOxidativeTargetViews({
+              selectedKeys: storedKeys,
+              proteins,
+              docking,
+              compoundId: subject.compoundId,
+            }).filter((row) => row.selected)
+            return (
+              <ul style={{ margin: "0.5rem 0 0", paddingLeft: "1.1rem", fontSize: "13px", color: "#475569", lineHeight: 1.5 }}>
+                {views.map((row) => (
+                  <li key={row.key}>
+                    <strong>{row.geneSymbol}</strong> — {row.proteinName}
+                    {row.curatedPdbId ? ` · curated PDB ${row.curatedPdbId}` : ""}
+                    {row.dockingAffinityKcalMol != null
+                      ? ` · docking context ${row.dockingAffinityKcalMol.toFixed(2)} kcal/mol (not a ROS value)`
+                      : ""}
+                  </li>
+                ))}
+              </ul>
+            )
+          })()}
+        </section>
       ) : null}
 
       {isBax ? (
@@ -1043,10 +1483,10 @@ function SubjectPrediction({
               marginBottom: "0.2rem",
             }}
           >
-            Mitochondrial Apoptotic Pathway (BAX Activation)
+            BAX-target context (exploratory)
           </strong>
-          Simulates pro-apoptotic BAX induction, mitochondrial outer membrane permeabilization, and apoptotic threshold
-          dynamics across ligand concentrations.
+          Only a BAX-target context index is simulated. This is not BAX/BCL-2/caspase expression, not Annexin V/PI, and not
+          viable/early/late/necrotic population percentages.
         </div>
       ) : null}
 
@@ -1070,7 +1510,7 @@ function SubjectPrediction({
       {running ? (
         <div className="adme-progress" aria-live="polite" style={{ marginTop: "1rem" }}>
           <div className="adme-running">
-            <p className="adme-pulse">RUNNING PREDICTION SIMULATION</p>
+            <p className="adme-pulse">RUNNING EXPLORATORY SIMULATION</p>
             <strong>
               {batch ? `Simulating ${batch.label} (${batch.done} of ${batch.total})` : `Simulating ${subject.label} · ${HERO[endpoint]}`}
             </strong>
@@ -1078,23 +1518,23 @@ function SubjectPrediction({
           <ol className="adme-stages">
             <li data-state="done">
               <Check size={14} aria-hidden />
-              <span>Assembling molecular descriptors</span>
+              <span>Collecting recorded identity fields</span>
             </li>
             <li data-state="done">
               <Check size={14} aria-hidden />
-              <span>Retrieving docking affinities</span>
+              <span>{isHippoYap ? "Including Hippo-target docking proxy" : "Excluding docking as assay driver"}</span>
             </li>
             <li data-state="active">
               <span className="adme-spin" aria-hidden />
-              <span>Querying bioactivity model</span>
+              <span>Building exploratory demonstration curve</span>
             </li>
             <li data-state="waiting">
               <span className="adme-wait" aria-hidden />
-              <span>Simulating concentration response</span>
+              <span>Applying SIMULATION evidence labels</span>
             </li>
             <li data-state="waiting">
               <span className="adme-wait" aria-hidden />
-              <span>Parsing prediction results</span>
+              <span>Persisting exploratory outputs</span>
             </li>
           </ol>
         </div>
@@ -1158,17 +1598,154 @@ function SubjectPrediction({
         </div>
       ) : null}
 
-      {/* OVERVIEW SECTION: Chart Stage & Prediction Facts Split */}
-      <div className="phyto-overview">
-        <section className="phyto-stage">
-          <h3>{isCompletedWithValidResult && chart ? "Concentration–response curve" : "Endpoint bioactivity visualization"}</h3>
-          {isCompletedWithValidResult && chart ? (
-            <div className="pred-chart" aria-label={`${chart.metric} concentration response`} style={{ height: "260px" }}>
+      {/* OUTPUT PARAMETERS — primary researcher focus */}
+      <section className="phyto-block assay-results-block">
+        <h3>Output parameters</h3>
+        <p className="phyto-caption">
+          Exploratory SIMULATION metrics for this endpoint. These are not experimental assay measurements.
+        </p>
+
+        {isCompletedWithValidResult && metricCards.main.length > 0 ? (
+          <>
+            <div className="assay-metric-grid" data-count={String(metricCards.main.length)}>
+              {metricCards.main.map((item, idx) => {
+                const parts = splitMetricDisplay(item.value)
+                return (
+                  <article key={item.label} className="assay-metric-card" data-primary={idx === 0 ? "true" : undefined}>
+                    <span className="assay-metric-label">{systemCopy(item.label)}</span>
+                    <strong className="assay-metric-value">{systemCopy(parts.value)}</strong>
+                    {parts.unit ? <span className="assay-metric-unit">{systemCopy(parts.unit)}</span> : null}
+                  </article>
+                )
+              })}
+            </div>
+
+            {metricCards.additional.length > 0 ? (
+              <div className="assay-metric-grid assay-metric-grid--secondary" data-count={String(metricCards.additional.length)}>
+                {metricCards.additional.map((item) => {
+                  const parts = splitMetricDisplay(item.value)
+                  return (
+                    <article key={item.label} className="assay-metric-card assay-metric-card--secondary">
+                      <span className="assay-metric-label">{systemCopy(item.label)}</span>
+                      <strong className="assay-metric-value">{systemCopy(parts.value)}</strong>
+                      {parts.unit ? <span className="assay-metric-unit">{systemCopy(parts.unit)}</span> : null}
+                    </article>
+                  )
+                })}
+              </div>
+            ) : null}
+
+            {run?.pathwayEffect ? (
+              <p className="dock-note" style={{ marginTop: "0.85rem" }}>
+                {systemCopy(run.pathwayEffect)}
+              </p>
+            ) : null}
+
+            {provenanceWarning ? (
+              <p className="dock-note" role="note" style={{ marginTop: "0.85rem" }}>
+                {provenanceWarning}
+              </p>
+            ) : null}
+
+            {legacyWarning && legacyOutputs.length > 0 ? (
+              <div className="nano-studies-alert" role="note" style={{ marginTop: "0.85rem" }}>
+                <p>{legacyWarning}</p>
+                <div className="dock-table-wrap" style={{ marginTop: "0.6rem" }}>
+                  <table className="dock-table">
+                    <thead>
+                      <tr>
+                        <th>Historical / legacy field</th>
+                        <th>Stored value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {legacyOutputs.map((item) => (
+                        <tr key={item.label}>
+                          <td>
+                            <strong>{systemCopy(item.label)}</strong>
+                          </td>
+                          <td>{systemCopy(item.value)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <p className="dock-note">
+            No exploratory simulation has been run for this subject yet. Click &ldquo;Run exploratory simulation&rdquo; after
+            acknowledging the SIMULATION disclaimer.
+          </p>
+        )}
+      </section>
+
+      {/* ASSAY GRAPH — supporting visualization below outputs */}
+      <section className="phyto-block assay-graph-block">
+        <h3>
+          {isCompletedWithValidResult && chart
+            ? isHippoYap
+              ? "Assay graph · YAP–TEAD residual activity vs concentration"
+              : isDpph
+                ? "Assay graph · DPPH scavenging vs concentration"
+                : isMtt
+                  ? "Assay graph · Metabolic viability vs concentration"
+                  : isLdh
+                    ? "Assay graph · Membrane-damage index vs concentration"
+                    : isRos
+                      ? "Assay graph · Relative ROS index vs concentration"
+                      : isBax
+                        ? "Assay graph · BAX-target context vs concentration"
+                        : "Assay graph · Concentration–response"
+            : "Assay graph"}
+        </h3>
+        <p className="phyto-caption">
+          {isCompletedWithValidResult && chart
+            ? `Supporting concentration–response for ${chart.metric.replace(/_/g, " ")}. Exploratory simulation only.`
+            : "Concentration–response visualization appears after the exploratory simulation completes."}
+        </p>
+
+        {isCompletedWithValidResult && chart ? (
+          <div className="pred-chart assay-graph-panel" aria-label={`${chart.metric} concentration response`}>
+            <p className="phyto-caption" style={{ marginBottom: "0.45rem" }}>
+              X:{" "}
+              {chart.rows[0]?.concentrationUnit === "uM"
+                ? "µM"
+                : chart.rows[0]?.concentrationUnit === "ug_per_mL"
+                  ? "µg/mL"
+                  : chart.rows[0]?.concentrationUnit || "concentration"}{" "}
+              · Y: {chart.rows[0]?.unit || "response"} · Metric: {chart.metric.replace(/_/g, " ")}
+            </p>
+            <div className="assay-graph-canvas">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chart.rows} margin={{ top: 10, right: 10, bottom: 5, left: -10 }}>
+                <LineChart data={chart.rows} margin={{ top: 12, right: 16, bottom: 8, left: 4 }}>
                   <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="concentration" tick={{ fontSize: 11, fill: "#64748b" }} />
-                  <YAxis tick={{ fontSize: 11, fill: "#64748b" }} width={42} />
+                  <XAxis
+                    dataKey="concentration"
+                    tick={{ fontSize: 12, fill: "#64748b" }}
+                    label={{
+                      value:
+                        chart.rows[0]?.concentrationUnit === "uM"
+                          ? "Concentration (µM)"
+                          : chart.rows[0]?.concentrationUnit === "ug_per_mL"
+                            ? "Concentration (µg/mL)"
+                            : "Concentration",
+                      position: "insideBottom",
+                      offset: -2,
+                      style: { fontSize: 11, fill: "#94a3b8" },
+                    }}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 12, fill: "#64748b" }}
+                    width={48}
+                    label={{
+                      value: chart.rows[0]?.unit || "Response",
+                      angle: -90,
+                      position: "insideLeft",
+                      style: { fontSize: 11, fill: "#94a3b8" },
+                    }}
+                  />
                   <Tooltip
                     contentStyle={{
                       borderRadius: "8px",
@@ -1178,143 +1755,98 @@ function SubjectPrediction({
                       fontSize: "12px",
                       boxShadow: "var(--card-shadow)",
                     }}
+                    formatter={(value: number) => [`${value} ${chart.rows[0]?.unit || ""}`.trim(), chart.metric.replace(/_/g, " ")]}
+                    labelFormatter={(label) => {
+                      const unit =
+                        chart.rows[0]?.concentrationUnit === "uM"
+                          ? "µM"
+                          : chart.rows[0]?.concentrationUnit === "ug_per_mL"
+                            ? "µg/mL"
+                            : chart.rows[0]?.concentrationUnit || ""
+                      return `${label} ${unit}`.trim()
+                    }}
                   />
                   <Line
                     type="monotone"
                     dataKey="value"
-                    stroke="#0f766e"
-                    strokeWidth={2.5}
-                    dot={{ r: 4, fill: "#0f766e" }}
-                    activeDot={{ r: 6 }}
+                    name={chart.metric.replace(/_/g, " ")}
+                    stroke={isHippoYap ? "#0369a1" : "#0f766e"}
+                    strokeWidth={2.75}
+                    dot={{ r: 4.5, fill: isHippoYap ? "#0369a1" : "#0f766e" }}
+                    activeDot={{ r: 7 }}
                     isAnimationActive={false}
                   />
                 </LineChart>
               </ResponsiveContainer>
             </div>
-          ) : (
-            <div
-              style={{
-                height: "260px",
-                display: "grid",
-                placeItems: "center",
-                background: "var(--surface-secondary)",
-                borderRadius: "10px",
-                border: "1px dashed var(--border)",
-                padding: "1rem",
-                textAlign: "center",
-              }}
-            >
-              <p className="phyto-missing">
-                {runError
-                  ? "Prediction failed. Click \u201cRetry Prediction\u201d to re-calculate response."
-                  : "Simulation has not run for this subject yet. Click \u201cRun Prediction\u201d to calculate response."}
-              </p>
-            </div>
-          )}
-
-          {isCompletedWithValidResult && primaryMetric ? (
-            <div className="phyto-adme" style={{ marginTop: "0.85rem" }}>
-              <span>Primary Calculated Result</span>
-              <strong data-mark="pass">{primaryMetric}</strong>
-            </div>
-          ) : null}
-        </section>
-
-        <section>
-          <h3>Prediction overview</h3>
-          <dl className="phyto-facts">
-            <Fact label="Ligand" value={subject.compoundName} />
-            <Fact
-              label="PubChem CID"
-              value={features.pubchemCid != null ? String(features.pubchemCid) : undefined}
-            />
-            <Fact label="Endpoint" value={spec.label} />
-            <Fact label="Cell context" value={subject.cellLineName} />
-            <Fact label="Protein target" value={subject.proteinName} />
-            <Fact label="Docking affinity" value={dockingContext(features, skippedDocking)} />
-            <Fact
-              label="Molecular weight"
-              value={features.molecularWeight != null ? `${features.molecularWeight} g/mol` : undefined}
-            />
-            <Fact label="Formula" value={features.formula} />
-            <Fact
-              label="Status"
-              value={
-                isCompletedWithValidResult ? (
-                  <span style={{ color: "#059669", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                    <Check size={13} strokeWidth={2.5} /> Completed
-                  </span>
-                ) : running ? (
-                  <span style={{ color: "#0284c7", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                    <span className="adme-spin" style={{ width: 10, height: 10, borderWidth: 1.5 }} /> Running simulation
-                  </span>
-                ) : queued ? (
-                  <span style={{ color: "#0284c7", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                    <Circle size={12} /> Queued
-                  </span>
-                ) : runError ? (
-                  <span style={{ color: "#e11d48", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                    <AlertCircle size={13} /> Prediction failed
-                  </span>
-                ) : (
-                  <span style={{ color: "#64748b", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                    <Clock size={13} /> Ready to run
-                  </span>
-                )
-              }
-            />
-          </dl>
-        </section>
-      </div>
-
-      {/* SIMULATION OUTPUTS TABLE: Modeled after AutoDock Vina Modes */}
-      <section className="phyto-block">
-        <h3>Simulation outputs & response points</h3>
-        <p className="phyto-caption">
-          Computational bioactivity metrics, concentration points, and predicted values.
-        </p>
-
-        {isCompletedWithValidResult && outputs.length > 0 ? (
-          <>
-            <div className="dock-table-wrap">
-              <table className="dock-table">
-                <thead>
-                  <tr>
-                    <th>Output parameter</th>
-                    <th>Calculated value</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {outputs.map((item, idx) => (
-                    <tr key={item.label} data-best={idx === 0 ? "true" : undefined}>
-                      <td>
-                        <strong>{systemCopy(item.label)}</strong>
-                      </td>
-                      <td>{systemCopy(item.value)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {run?.pathwayEffect ? (
-              <p className="dock-note" style={{ marginTop: "0.85rem" }}>
-                {systemCopy(run.pathwayEffect)}
-              </p>
-            ) : null}
-          </>
+          </div>
         ) : (
-          <p className="dock-note">
-            Simulation has not run for this subject yet. Click &ldquo;Run Prediction&rdquo; to calculate response.
-          </p>
+          <div className="assay-graph-empty">
+            <p className="phyto-missing">
+              {runError
+                ? "Exploratory simulation failed. Click “Retry exploratory simulation” to re-run."
+                : "No graph yet. Run the exploratory simulation to generate the concentration–response curve."}
+            </p>
+          </div>
         )}
       </section>
 
-      {/* PREDICTION METHOD / PROVENANCE BLOCK */}
-      {isCompletedWithValidResult ? (
-        <section className="phyto-block">
-          <h3>Prediction method & specifications</h3>
-          <p className="phyto-caption">Computational model parameters, algorithm descriptors, and assumptions.</p>
+      {/* Compact study context after results */}
+      <section className="phyto-block">
+        <h3>Prediction overview</h3>
+        <dl className="phyto-facts">
+          <Fact label="Ligand" value={subject.compoundName} />
+          <Fact
+            label="PubChem CID"
+            value={features.pubchemCid != null ? String(features.pubchemCid) : undefined}
+          />
+          <Fact label="Endpoint" value={spec.label} />
+          <Fact label="Cell context" value={subject.cellLineName} />
+          <Fact label="Protein target" value={subject.proteinName} />
+          <Fact label="Docking affinity" value={dockingContext(features, skippedDocking)} />
+          <Fact
+            label="Molecular weight"
+            value={features.molecularWeight != null ? `${features.molecularWeight} g/mol` : undefined}
+          />
+          <Fact label="Formula" value={features.formula} />
+          <Fact
+            label="Status"
+            value={
+              isCompletedWithValidResult ? (
+                <span style={{ color: "#059669", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                  <Check size={13} strokeWidth={2.5} /> Completed
+                </span>
+              ) : running ? (
+                <span style={{ color: "#0284c7", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                  <span className="adme-spin" style={{ width: 10, height: 10, borderWidth: 1.5 }} /> Running simulation
+                </span>
+              ) : queued ? (
+                <span style={{ color: "#0284c7", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                  <Circle size={12} /> Queued
+                </span>
+              ) : runError ? (
+                <span style={{ color: "#e11d48", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                  <AlertCircle size={13} /> Prediction failed
+                </span>
+              ) : (
+                <span style={{ color: "#64748b", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                  <Clock size={13} /> Ready to run
+                </span>
+              )
+            }
+          />
+        </dl>
+      </section>
+
+      {/* INTERPRETATION / ASSUMPTIONS — anchor target for evidence classification link */}
+      <section className="phyto-block" id="prediction-assumptions-limitations">
+        <h3>Interpretation & assumptions</h3>
+        <p className="phyto-caption">
+          {isCompletedWithValidResult
+            ? "Method labels, exploratory limitations, and acknowledgement audit."
+            : "Endpoint limitations before a run. Full method provenance appears after the exploratory simulation completes."}
+        </p>
+        {isCompletedWithValidResult ? (
           <Provenance
             method={systemCopy(run?.source ?? run?.methodType ?? "")}
             model={systemCopy(run?.methodName ?? "")}
@@ -1322,9 +1854,22 @@ function SubjectPrediction({
             generatedAt={run?.dateGenerated ?? ""}
             features={features}
             assumptions={systemCopy(run?.assumptions ?? "")}
+            acknowledgement={readAcknowledgementFromParameters(run?.inputParameters)}
           />
-        </section>
-      ) : null}
+        ) : (
+          <div className="pred-assumption-box">
+            <div className="pred-assumption-header">
+              <span>Assumptions &amp; limitations</span>
+            </div>
+            <p className="pred-assumption-text">{systemCopy(spec.context)}</p>
+            <p className="pred-assumption-text" style={{ marginTop: "0.55rem" }}>
+              No validated predictive model is registered for this endpoint. Outputs remain SIMULATION / exploratory
+              computational results until a documented model with provenance is available. Experimental measurements are
+              recorded in Laboratory Validation.
+            </p>
+          </div>
+        )}
+      </section>
 
       {/* SCIENTIFIC LITERATURE EVIDENCE BLOCK matching Molecular Docking */}
       {isCompletedWithValidResult ? (
@@ -1346,14 +1891,14 @@ function systemCopy(value: string): string {
   return value
     .replace(/NANO-HEPATOTEA Prototype|NANOTOPHEA Prototype|HEPATOTEA Prototype/g, "HEPATOTEA")
     .replace(/NANO-HEPATOTEA|NANOTOPHEA/g, "HEPATOTEA")
-    .replace(/Deterministic prototype simulation/g, "Computational prediction")
-    .replace(/\bprototype-v1\b/g, "v1")
+    .replace(/Deterministic prototype simulation/g, "Exploratory simulation")
+    .replace(/Computational prediction/gi, "Exploratory simulation")
+    .replace(/\bprototype-v1\b/g, "exploratory-v1")
     .replace(/\bprototype score\b/gi, "score")
     .replace(/\bprototype ratio\b/gi, "ratio")
-    .replace(/demonstration /gi, "")
     .replace(/Prototype curve is higher at the upper concentrations\./g, "The response is higher at the upper concentrations.")
     .replace(/Prototype curve stays lower across the concentrations\./g, "The response stays lower across the concentrations.")
-    .replace(/\bprototype\b/gi, "")
+    .replace(/\bprototype\b/gi, "exploratory")
     .replace(/\s{2,}/g, " ")
     .trim()
 }
@@ -1431,6 +1976,7 @@ function Provenance({
   generatedAt,
   features,
   assumptions,
+  acknowledgement,
 }: {
   method: string
   model: string
@@ -1438,6 +1984,7 @@ function Provenance({
   generatedAt: string
   features: PredictionFeatures
   assumptions?: string
+  acknowledgement?: ReturnType<typeof readAcknowledgementFromParameters>
 }) {
   const [featuresExpanded, setFeaturesExpanded] = useState(false)
   const [activeCategory, setActiveCategory] = useState<"all" | "targets" | "physicochemical" | "adme" | "toxicity">("all")
@@ -1597,6 +2144,20 @@ function Provenance({
             <span>Mathematical Model Formulation & Assumptions</span>
           </div>
           <p className="pred-assumption-text">{assumptions}</p>
+        </div>
+      ) : null}
+
+      {acknowledgement ? (
+        <div className="pred-assumption-box" style={{ marginTop: "0.75rem" }}>
+          <div className="pred-assumption-header">
+            <Check size={14} aria-hidden />
+            <span>Exploratory acknowledgement audit</span>
+          </div>
+          <p className="pred-assumption-text">
+            {acknowledgement.present
+              ? `Acknowledged at ${acknowledgement.acknowledgedAt ?? "unknown time"} by authenticated user ${acknowledgement.acknowledgedBy ?? "unknown"} (version ${acknowledgement.acknowledgementVersion ?? "unspecified"}).`
+              : "Historical run: no exploratory acknowledgement metadata is stored on this record. The simulation result is preserved; consent was not captured under the current audit format."}
+          </p>
         </div>
       ) : null}
 
@@ -1890,29 +2451,56 @@ function EvidenceBrowser({
 }
 
 function simulationOutputs(run?: PredictionRun): Array<{ label: string; value: string }> {
-  if (!run || run.provenance?.evidenceClass !== "SIMULATION") return storedOutputs(run)
-  const rows: Array<{ label: string; value: string }> = []
-  for (const [key, value] of Object.entries(run.inputParameters ?? {})) {
-    if (!key.startsWith("output:")) continue
-    const label = key.slice("output:".length)
-    const unit = run.inputParameters?.[`unit:${label}`]
-    rows.push({ label, value: unit ? `${value} ${unit}` : String(value) })
-  }
-  return rows.length ? rows : storedOutputs(run)
+  const display = sanitizePredictionDisplay(run)
+  return display.primary.map((row) => ({ label: row.label, value: row.value }))
 }
 
-function storedOutputs(run?: PredictionRun): Array<{ label: string; value: string }> {
-  if (!run) return []
-  const rows: Array<{ label: string; value: string }> = []
-  if (run.summaryIc50 != null) rows.push({ label: "IC50", value: `${run.summaryIc50}${run.summaryIc50Unit ? ` ${run.summaryIc50Unit}` : ""}` })
-  if (run.summaryMaximum != null) rows.push({ label: "Maximum", value: `${run.summaryMaximum}${run.summaryMaximumUnit ? ` ${run.summaryMaximumUnit}` : ""}` })
-  if (run.teac) rows.push({ label: "TEAC", value: run.teac })
-  if (run.selectivityIndex) rows.push({ label: "Selectivity index", value: run.selectivityIndex })
-  if (run.pathwayEffect) rows.push({ label: "Pathway", value: run.pathwayEffect })
-  for (const point of run.resultPoints) {
-    rows.push({ label: `${point.metric} at ${point.concentration}`, value: `${point.value} ${point.valueUnit}` })
+/** Split "12.5 µM (not fitted IC50)" into value + unit for metric cards. */
+function splitMetricDisplay(raw: string): { value: string; unit: string } {
+  const text = String(raw ?? "").trim()
+  if (!text) return { value: "—", unit: "" }
+  const match = text.match(/^([-+]?\d*\.?\d+(?:e[-+]?\d+)?)\s*(.*)$/i)
+  if (!match) return { value: text, unit: "" }
+  return { value: match[1], unit: match[2].trim() }
+}
+
+const ENDPOINT_MAIN_OUTPUT_PATTERNS: Record<PredictionEndpoint, RegExp[]> = {
+  dpph: [/Scavenging response/i, /Hill midpoint/i, /Maximum scavenging/i],
+  mtt: [/Metabolic viability/i, /Hill midpoint/i, /Maximum metabolic inhibition/i],
+  ldh: [/membrane-damage|Membrane-damage/i, /Hill midpoint/i],
+  ros: [/ROS index/i, /Hill midpoint/i],
+  bax: [/BAX-target context/i, /Hill midpoint/i],
+  hippo_yap: [/YAP–TEAD residual|YAP-TEAD residual/i, /Estimated YAP suppression/i, /p-YAP Ser127/i],
+}
+
+/**
+ * Prioritize assay-specific numeric outputs for prominent cards.
+ * Excludes pathway notes and other narrative fields from metric cards.
+ */
+function prioritizeAssayOutputs(
+  endpoint: PredictionEndpoint,
+  outputs: Array<{ label: string; value: string }>,
+): { main: Array<{ label: string; value: string }>; additional: Array<{ label: string; value: string }> } {
+  const numeric = outputs.filter((row) => !/^Pathway note$/i.test(row.label))
+  const patterns = ENDPOINT_MAIN_OUTPUT_PATTERNS[endpoint] ?? []
+  const main: Array<{ label: string; value: string }> = []
+  const used = new Set<string>()
+
+  for (const pattern of patterns) {
+    const hit = numeric.find((row) => pattern.test(row.label) && !used.has(row.label))
+    if (!hit) continue
+    main.push(hit)
+    used.add(hit.label)
+    if (main.length >= 3) break
   }
-  return rows
+
+  if (!main.length && numeric[0]) {
+    main.push(numeric[0])
+    used.add(numeric[0].label)
+  }
+
+  const additional = numeric.filter((row) => !used.has(row.label))
+  return { main, additional }
 }
 
 function dockingContext(features: PredictionFeatures, skipped: SkippedDockingPair[]): string {
@@ -1945,26 +2533,49 @@ function chartable(points: PredictionSeriesPoint[]): { metric: string; rows: Pre
   return null
 }
 
+function preferredSimulationOutput(
+  run: PredictionRun,
+): { label: string; value: string } | undefined {
+  const outputs = simulationOutputs(run)
+  if (!outputs.length) return undefined
+  if (run.endpoint === "hippo_yap") {
+    return (
+      outputs.find((row) => /YAP–TEAD residual|YAP-TEAD residual|Estimated YAP suppression/i.test(row.label)) ??
+      outputs[0]
+    )
+  }
+  if (run.endpoint === "dpph") {
+    return outputs.find((row) => /Scavenging|Hill midpoint/i.test(row.label)) ?? outputs[0]
+  }
+  if (run.endpoint === "mtt") {
+    return outputs.find((row) => /Metabolic viability/i.test(row.label)) ?? outputs[0]
+  }
+  if (run.endpoint === "ldh") {
+    return outputs.find((row) => /membrane-damage|Membrane-damage/i.test(row.label)) ?? outputs[0]
+  }
+  if (run.endpoint === "ros") {
+    return outputs.find((row) => /ROS index/i.test(row.label)) ?? outputs[0]
+  }
+  if (run.endpoint === "bax") {
+    return outputs.find((row) => /BAX-target context/i.test(row.label)) ?? outputs[0]
+  }
+  return outputs[0]
+}
+
 function primaryOutputSnippet(run?: PredictionRun): string {
   if (!run) return ""
-  if (run.summaryIc50 != null) return `IC50: ${run.summaryIc50} ${run.summaryIc50Unit ?? "μM"}`
+  const preferred = preferredSimulationOutput(run)
+  if (preferred) return `${preferred.label}: ${preferred.value}`
   if (run.summaryMaximum != null) return `Max: ${run.summaryMaximum}${run.summaryMaximumUnit ?? "%"}`
-  if (run.teac) return `TEAC: ${run.teac}`
-  if (run.selectivityIndex) return `SI: ${run.selectivityIndex}`
-  const outputs = simulationOutputs(run)
-  if (outputs[0]) return `${outputs[0].label}: ${outputs[0].value}`
   return "Completed"
 }
 
 function primaryMetricHighlight(run?: PredictionRun): string | null {
   if (!run) return null
-  if (run.summaryIc50 != null) return `${run.summaryIc50} ${run.summaryIc50Unit ?? "μM"} (IC50)`
+  const preferred = preferredSimulationOutput(run)
+  if (preferred) return `${preferred.value} (${preferred.label})`
   if (run.summaryMaximum != null) return `${run.summaryMaximum}${run.summaryMaximumUnit ?? "%"} (Max response)`
-  if (run.teac) return `${run.teac} (TEAC)`
-  if (run.selectivityIndex) return `${run.selectivityIndex} (SI)`
-  const outputs = simulationOutputs(run)
-  if (outputs[0]) return `${outputs[0].value} (${outputs[0].label})`
-  return "Calculated"
+  return "Exploratory result"
 }
 
 export default BiologicalPredictionsWorkspace

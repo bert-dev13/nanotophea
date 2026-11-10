@@ -69,7 +69,7 @@ export const LDH_ASSAY_CONFIG: LabAssayConfig = {
   subtitle: "Wet-lab LDH cytotoxicity on HepG2.",
   banner: "EXPERIMENTAL LDH — Laboratory",
   contractNote:
-    "HepG2 only. T1 spontaneous/vehicle; T2 maximum LDH release / lysis control (record actual reagent); T3–T6 at 50/100/250/500 µg/mL; R1–R3. Do not invent protocol reagents.",
+    "HepG2 only. After cell-line selection, choose Include Nanoparticle or Skip and record the actual treatment when included. T1 spontaneous/vehicle; T2 maximum LDH release / lysis control (record actual reagent); T3–T6 at 50/100/250/500 µg/mL; R1–R3. Do not invent protocol reagents, nanoparticle treatments, or Selectivity Index values.",
   icon: Droplets,
   concentrationUnit: "ug_per_mL",
   concentrationUnitLabel: "µg/mL",

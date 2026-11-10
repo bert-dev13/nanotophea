@@ -15,12 +15,7 @@ import {
 } from "lucide-react"
 import { useAuth } from "@/components/providers/AuthProvider"
 import { useStudy } from "@/components/providers/StudyProvider"
-import dynamic from "next/dynamic"
-
-const CompoundViewer3D = dynamic(
-  () => import("@/lib/mol3d").then((m) => m.CompoundViewer3D),
-  { ssr: false, loading: () => <div className="h-[280px] flex items-center justify-center text-xs text-slate-400">Loading 3D structure…</div> }
-)
+import { DeferredCompoundViewer } from "@/components/study/DeferredMolecularViewer"
 import {
   CATALOG_COMPOUNDS,
   type CatalogCompound,
@@ -80,13 +75,21 @@ export function PhytochemicalBrowser({
     }
   }, [])
 
+  const studyId = activeStudy?.id ?? null
+  const activeStudyRef = useRef(activeStudy)
+  activeStudyRef.current = activeStudy
+
   const load = useCallback(async () => {
-    if (!activeStudy) return
+    const study = activeStudyRef.current
+    if (!study) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
     setError(null)
     try {
       const [studyRows, globalRows] = await Promise.all([
-        listCompounds(activeStudy.id),
+        listCompounds(study.id),
         listGlobalPhytochemicals(),
       ])
       setRows(studyRows)
@@ -98,7 +101,7 @@ export function PhytochemicalBrowser({
     } finally {
       setLoading(false)
     }
-  }, [activeStudy])
+  }, [studyId])
 
   useEffect(() => {
     void load()
@@ -505,7 +508,7 @@ export function PhytochemicalBrowser({
               <section className="phyto-stage">
                 <h3>Molecular structure</h3>
                 {viewing.pubchemCid != null ? (
-                  <CompoundViewer3D key={viewing.pubchemCid} cid={viewing.pubchemCid} name={viewing.name} height={300} quiet />
+                  <DeferredCompoundViewer key={viewing.pubchemCid} cid={viewing.pubchemCid} name={viewing.name} height={300} quiet />
                 ) : (
                   <p className="phyto-missing">This library record has no PubChem CID.</p>
                 )}

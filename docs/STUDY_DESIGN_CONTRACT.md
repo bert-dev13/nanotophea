@@ -60,7 +60,7 @@ Every stored or displayed scientific value **must** carry exactly one primary ev
 
 | Class | Meaning | Allowed? |
 |-------|---------|----------|
-| `SIMULATION` | Exploratory math (e.g. undocumented Hill curves) with **no** validated predictive model identity | Allowed **only** if labeled `SIMULATION` / “Exploratory simulation,” never as Predicted, Experimental, or “assay result.” Prefer retiring undisclosed sims in favor of documented `PREDICTED` methods or removing them. |
+| `SIMULATION` | Exploratory math (e.g. undocumented Hill curves) with **no** validated predictive model identity | Allowed **only** if labeled `SIMULATION` / “Exploratory simulation,” never as Predicted, Experimental, or “assay result.” Prefer retiring undisclosed sims in favor of documented `PREDICTED` methods or removing them. **Implementation requirement (Rev02):** new exploratory runs must record explicit researcher acknowledgement (server-stamped actor, timestamp, version) in run metadata; validated mode must never silently fall back to exploratory math. |
 
 ### Forbidden as evidence
 
@@ -405,6 +405,7 @@ Changes to this contract require:
 |------|--------|--------------|
 | 2026-09-29 | Initial contract: DPPH & LDH in-silico+experimental; MTT/ROS/BAX/Hippo–YAP in-silico only; HepG2 primary; formulation 2 g + 1 g; real Vina/ADMET; remove fake AI/dosage/sims-as-lab | Researchers (Step 2 alignment) |
 | 2026-09-29 | ADMET evidence rule: classify by origin (PREDICTED / LITERATURE / REFERENCE); never force PREDICTED merely because a value is shown in the ADMET module; preserve source provenance | Researchers (evidence clarification) |
+| 2026-11-11 | Clarified `SIMULATION` operational controls: explicit exploratory acknowledgement with server-stamped actor/time/version; no validated→prototype silent fallback; legacy misleading metrics must not display as assay truth. Does **not** authorize claiming any of the six modules as validated `PREDICTED` models. | Engineering Rev02 (integrity alignment; scientific claims unchanged) |
 
 ---
 

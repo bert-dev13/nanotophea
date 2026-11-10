@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react"
 import { createPortal } from "react-dom"
 import { ArrowLeft, ArrowRight, Check, Circle, FlaskConical, Minus, Pencil, Search, X } from "lucide-react"
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
@@ -19,6 +19,7 @@ import type {
   LabReplicate,
   LabReplicateCode,
   LabTreatmentCode,
+  NanoparticleFormulation,
   PredictionRun,
   Protein,
 } from "@/lib/domain/models"
@@ -36,6 +37,14 @@ import {
   formatLabNumber,
   LDH_CYTOTOXICITY_FORMULA,
 } from "@/lib/lab/derivedAssays"
+import {
+  ldhNanoparticleSetupSummary,
+  ldhSelectivityIndexDisplay,
+  ldhTreatmentSampleLabel,
+  normalizeLdhNanoparticleSetup,
+  validateLdhNanoparticleSetup,
+  type LdhNanoparticleSetup,
+} from "@/lib/lab/ldhNanoparticleSetup"
 import { numericMeasurement } from "@/lib/lab/labCalculations"
 import {
   endpointCoverageStatus,
@@ -81,6 +90,18 @@ const LDH_LABEL: Record<LabTreatmentCode, string> = {
   T6: "HepatoTea",
 }
 
+function ldhLabelsForSetup(setup: LdhNanoparticleSetup | null | undefined): Record<LabTreatmentCode, string> {
+  const sample = ldhTreatmentSampleLabel(setup)
+  return {
+    T1: "Control",
+    T2: "Maximum LDH release",
+    T3: sample,
+    T4: sample,
+    T5: sample,
+    T6: sample,
+  }
+}
+
 type Grid = Record<LabTreatmentCode, [string, string, string]>
 
 interface AssayDraft {
@@ -95,6 +116,10 @@ interface AssayDraft {
   ic50Unit: string
   ic50Method: string
   grid: Grid
+  /** LDH only — null until the researcher chooses include or skip. */
+  nanoparticleChoice: "include" | "skip" | ""
+  nanoparticleTreatment: string
+  nanoparticleRecordId: string
 }
 
 interface CharDraft {
@@ -138,6 +163,9 @@ function emptyAssayDraft(): AssayDraft {
     ic50Unit: "",
     ic50Method: "",
     grid: emptyGrid(),
+    nanoparticleChoice: "",
+    nanoparticleTreatment: "",
+    nanoparticleRecordId: "",
   }
 }
 
@@ -188,6 +216,11 @@ export function LaboratoryWorkspace({
   const handleChanged = onChangedAction ?? (() => {})
   const { user } = useAuth()
   const { activeStudy, updateActiveStudy } = useStudy()
+  const studyId = activeStudy?.id ?? null
+  const activeStudyRef = useRef(activeStudy)
+  activeStudyRef.current = activeStudy
+  const loadGenerationRef = useRef(0)
+  const coverageRedirectRef = useRef<string | null>(null)
   const sectionTab = ["coverage", "dpph", "mtt", "ldh", "ros", "bax", "hippo-yap", "characterization"].includes(tab) ? tab : "coverage"
   const [compounds, setCompounds] = useState<Compound[]>([])
   const [proteins, setProteins] = useState<Protein[]>([])
@@ -195,8 +228,10 @@ export function LaboratoryWorkspace({
   const [datasets, setDatasets] = useState<LabDataset[]>([])
   const [replicates, setReplicates] = useState<Record<"dpph" | "ldh", LabReplicate[]>>({ dpph: [], ldh: [] })
   const [predictions, setPredictions] = useState<PredictionRun[]>([])
+  const [nanoparticle, setNanoparticle] = useState<NanoparticleFormulation | null>(null)
   const [sections, setSections] = useState<LaboratorySectionSelection | undefined>(activeStudy?.laboratorySections)
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [entryOpen, setEntryOpen] = useState(false)
   const [flexOpen, setFlexOpen] = useState(false)
@@ -208,41 +243,88 @@ export function LaboratoryWorkspace({
   const [filter, setFilter] = useState<"all" | "recorded" | "pending">("all")
   const [showPicked, setShowPicked] = useState(false)
 
-  const load = useCallback(async () => {
-    if (!activeStudy) return
-    setLoading(true)
+  /**
+   * Fetch laboratory records for the active study.
+   * Soft refreshes (after save / assay switch) must not flip the page into a full-screen loading state.
+   * Depend only on studyId — not the whole activeStudy object — or updateActiveStudy() retriggers an infinite load loop.
+   */
+  const load = useCallback(async (options?: { soft?: boolean }) => {
+    const study = activeStudyRef.current
+    const soft = Boolean(options?.soft)
+    const generation = ++loadGenerationRef.current
+
+    if (!study) {
+      setCompounds([])
+      setProteins([])
+      setCellLines([])
+      setDatasets([])
+      setPredictions([])
+      setNanoparticle(null)
+      setReplicates({ dpph: [], ldh: [] })
+      setSections(undefined)
+      setLoading(false)
+      setRefreshing(false)
+      setError("No active study is available for laboratory validation.")
+      return
+    }
+
+    if (soft) setRefreshing(true)
+    else setLoading(true)
     setError(null)
+
     try {
-      const [compoundRows, proteinRows, lineRows, datasetRows, predictionRows] = await Promise.all([
-        listCompounds(activeStudy.id),
-        listProteins(activeStudy.id),
-        listCellLines(activeStudy.id),
-        listLabDatasets(activeStudy.id),
-        listPredictionRuns(activeStudy.id).catch(() => [] as PredictionRun[]),
+      const [compoundRows, proteinRows, lineRows, datasetRows, predictionRows, nanoparticleRes] = await Promise.all([
+        listCompounds(study.id),
+        listProteins(study.id),
+        listCellLines(study.id),
+        listLabDatasets(study.id),
+        listPredictionRuns(study.id).catch(() => [] as PredictionRun[]),
+        fetch(`/api/studies/${study.id}/nanoparticle`).then(async (res) => {
+          if (!res.ok) return null
+          const body = (await res.json()) as { record?: NanoparticleFormulation | null }
+          return body.record ?? null
+        }).catch(() => null),
       ])
+      if (generation !== loadGenerationRef.current) return
+
       const dpphSet = latestDataset(datasetRows, "dpph")
       const ldhSet = latestDataset(datasetRows, "ldh")
       const [dpphReps, ldhReps] = await Promise.all([
-        dpphSet ? listLabReplicates(activeStudy.id, dpphSet.id) : Promise.resolve([]),
-        ldhSet ? listLabReplicates(activeStudy.id, ldhSet.id) : Promise.resolve([]),
+        dpphSet ? listLabReplicates(study.id, dpphSet.id) : Promise.resolve([]),
+        ldhSet ? listLabReplicates(study.id, ldhSet.id) : Promise.resolve([]),
       ])
+      if (generation !== loadGenerationRef.current) return
+
       setCompounds(compoundRows)
       setProteins(proteinRows)
       setCellLines(lineRows)
       setDatasets(datasetRows)
       setPredictions(predictionRows)
+      setNanoparticle(nanoparticleRes)
       setReplicates({ dpph: dpphReps, ldh: ldhReps })
-      setSections(activeStudy.laboratorySections)
+      setSections(activeStudyRef.current?.laboratorySections ?? study.laboratorySections)
     } catch (e) {
+      if (generation !== loadGenerationRef.current) return
       setError(toUserFacingError(e, "Laboratory records could not be loaded."))
     } finally {
-      setLoading(false)
+      if (generation === loadGenerationRef.current) {
+        setLoading(false)
+        setRefreshing(false)
+      }
     }
-  }, [activeStudy])
+  }, [studyId])
 
   useEffect(() => {
+    coverageRedirectRef.current = null
     void load()
   }, [load])
+
+  // Keep local coverage mirror in sync when study metadata changes without reloading datasets.
+  useEffect(() => {
+    if (activeStudy?.laboratorySections) {
+      setSections(activeStudy.laboratorySections)
+    }
+  }, [activeStudy?.laboratorySections, activeStudy?.updatedAt])
 
   const parties = {
     compounds: compounds.map((row) => ({ id: row.id, name: row.name })),
@@ -292,11 +374,16 @@ export function LaboratoryWorkspace({
     })
   }, [visible, datasets, sections, activeStudy?.laboratoryOmissions, filter, query])
 
+  // One-shot: leave the legacy "coverage" URL for the first assay without re-pushing on every render.
+  const firstVisibleTab = visible[0]?.tab ?? null
   useEffect(() => {
-    if (loading || sectionTab !== "coverage") return
-    const first = visible[0]
-    if (first) handleTab(first.tab)
-  }, [loading, handleTab, sectionTab, visible])
+    if (loading || sectionTab !== "coverage" || !firstVisibleTab) return
+    if (coverageRedirectRef.current === studyId) return
+    coverageRedirectRef.current = studyId
+    handleTab(firstVisibleTab)
+    // Intentionally omit handleTab from deps — parent often passes an unstable callback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, sectionTab, firstVisibleTab, studyId])
 
   useEffect(() => {
     setFlexOpen(false)
@@ -392,11 +479,31 @@ export function LaboratoryWorkspace({
         </div>
       </header>
 
-      {error ? <p className="nano-studies-alert" role="alert">{error}</p> : null}
+      {error ? (
+        <div className="nano-studies-alert" role="alert" style={{ display: "flex", flexWrap: "wrap", gap: "0.65rem", alignItems: "center" }}>
+          <p style={{ margin: 0, flex: "1 1 220px" }}>{error}</p>
+          <button type="button" className="phyto-select" data-on="false" onClick={() => void load()}>
+            Retry
+          </button>
+        </div>
+      ) : null}
       {checkError ? <p className="nano-studies-alert" role="alert">{checkError}</p> : null}
+      {refreshing && !loading ? (
+        <p className="nano-setup-progress-label" style={{ marginTop: "0.35rem" }} aria-live="polite">
+          Updating laboratory records…
+        </p>
+      ) : null}
 
       {loading ? (
         <p className="nano-studies-empty">Loading laboratory endpoints…</p>
+      ) : error && visible.length === 0 ? (
+        <div className="nano-studies-empty">
+          <p>Laboratory endpoints could not be loaded. Use Retry above, or return to Biological Predictions.</p>
+          <button type="button" className="phyto-back" onClick={handleBack}>
+            <ArrowLeft size={15} aria-hidden />
+            Biological Predictions
+          </button>
+        </div>
       ) : visible.length === 0 ? (
         <div className="nano-studies-empty">
           <p>This study has no laboratory endpoints configured.</p>
@@ -578,6 +685,7 @@ export function LaboratoryWorkspace({
                       replicates={replicates[active.endpoint]}
                       compounds={names}
                       hepg2={hepg2}
+                      nanoparticle={nanoparticle}
                       predictionLabels={subjectsForModule(active.endpoint, parties.compounds, parties.proteins, parties.cellLines)
                         .filter((subject) => predictions.some((run) => run.endpoint === active.endpoint && runMatchesSubject(run, subject)))
                         .map((subject) => subject.label)}
@@ -645,6 +753,7 @@ export function LaboratoryWorkspace({
           dataset={latestDataset(datasets, active.endpoint)}
           replicates={replicates[active.endpoint]}
           hepg2={hepg2}
+          nanoparticle={nanoparticle}
           onClose={() => setEntryOpen(false)}
           onSave={async (input, rows) => {
             if (!activeStudy || !user) return
@@ -669,7 +778,7 @@ export function LaboratoryWorkspace({
             await updateLabDataset(activeStudy.id, saved.id, actor, input)
             await clearNotTested(active.id)
             setEntryOpen(false)
-            await load()
+            await load({ soft: true })
             handleChanged()
           }}
         />
@@ -693,7 +802,7 @@ export function LaboratoryWorkspace({
             await clearNotTested(active.id)
             setFlexOpen(false)
             setShowResult(true)
-            await load()
+            await load({ soft: true })
             handleChanged()
           }}
         />
@@ -710,7 +819,7 @@ export function LaboratoryWorkspace({
             else await createLabDataset(activeStudy.id, actor, input)
             await updateActiveStudy({ laboratoryEvidenceAt: new Date().toISOString() })
             setCharOpen(null)
-            await load()
+            await load({ soft: true })
             handleChanged()
           }}
         />
@@ -917,6 +1026,7 @@ function AssayPanel({
   replicates,
   compounds,
   hepg2,
+  nanoparticle,
   predictionLabels,
   onEnter,
 }: {
@@ -925,6 +1035,7 @@ function AssayPanel({
   replicates: LabReplicate[]
   compounds: string[]
   hepg2?: CellLineRecord
+  nanoparticle?: NanoparticleFormulation | null
   predictionLabels: string[]
   onEnter: () => void
 }) {
@@ -933,8 +1044,18 @@ function AssayPanel({
   const live = deriveExperimentalResults(assay, replicates)
   const hasAbsorbance = replicates.some((row) => numericMeasurement(row, rawKey) !== undefined)
   const recorded = Boolean(dataset)
-  const labels = assay === "dpph" ? DPPH_LABEL : LDH_LABEL
+  const ldhSetup =
+    assay === "ldh" ? normalizeLdhNanoparticleSetup(dataset?.characterization?.ldhNanoparticleSetup) : null
+  const labels = assay === "dpph" ? DPPH_LABEL : ldhLabelsForSetup(ldhSetup)
   const chart = dosePoints(live.summaries, derivedKey)
+  const siDisplay =
+    assay === "ldh"
+      ? ldhSelectivityIndexDisplay({
+          setup: ldhSetup,
+          ic50Value: dataset?.ic50?.value,
+          ic50Method: dataset?.ic50?.method,
+        })
+      : null
 
   return (
     <>
@@ -1005,13 +1126,32 @@ function AssayPanel({
         ) : (
           <div><dt>Cell line</dt><dd>{hepg2 ? hepg2.name : "HepG2 is not selected"}</dd></div>
         )}
+        {assay === "ldh" ? (
+          <div>
+            <dt>Nanoparticle</dt>
+            <dd>{ldhNanoparticleSetupSummary(ldhSetup)}</dd>
+          </div>
+        ) : null}
         <div><dt>Replicates</dt><dd>R1 · R2 · R3</dd></div>
       </dl>
+
+      {assay === "ldh" && recorded ? (
+        <section className="phyto-block">
+          <h3>Nanoparticle setup</h3>
+          <p className="phyto-caption">
+            Recorded after cell-line selection for this LDH experimental run. Treatment labels below follow this setup.
+          </p>
+          <p className="dock-note" style={{ marginTop: "0.55rem" }}>
+            {ldhNanoparticleSetupSummary(ldhSetup)}
+            {nanoparticle?.systemName ? ` · Study record available: ${nanoparticle.systemName}` : ""}
+          </p>
+        </section>
+      ) : null}
 
       {!recorded ? (
         <section className="phyto-block">
           <h3>Treatment design</h3>
-          <TreatmentTable assay={assay} />
+          <TreatmentTable assay={assay} labels={labels} />
           <div className="lab-assay-action">
             <div>
               <p className="dock-empty-title">No laboratory results recorded yet.</p>
@@ -1053,6 +1193,17 @@ function AssayPanel({
           {dataset?.ic50 ? (
             <p className="dock-note">IC50 {dataset.ic50.value} {dataset.ic50.unit}. Method {dataset.ic50.method}</p>
           ) : null}
+          {siDisplay ? (
+            <div className="assay-metric-grid" data-count="1" style={{ marginTop: "0.85rem" }}>
+              <article className="assay-metric-card">
+                <span className="assay-metric-label">{siDisplay.label}</span>
+                <strong className="assay-metric-value">{siDisplay.value}</strong>
+                <span className="assay-metric-unit" style={{ display: "block", marginTop: "0.35rem", fontWeight: 400, lineHeight: 1.4 }}>
+                  {siDisplay.note}
+                </span>
+              </article>
+            </div>
+          ) : null}
           {dataset?.notes?.trim() ? <p className="dock-note">{dataset.notes.trim()}</p> : null}
         </section>
       )}
@@ -1060,8 +1211,14 @@ function AssayPanel({
   )
 }
 
-function TreatmentTable({ assay }: { assay: "dpph" | "ldh" }) {
-  const labels = assay === "dpph" ? DPPH_LABEL : LDH_LABEL
+function TreatmentTable({
+  assay,
+  labels,
+}: {
+  assay: "dpph" | "ldh"
+  labels?: Record<LabTreatmentCode, string>
+}) {
+  const resolved = labels ?? (assay === "dpph" ? DPPH_LABEL : LDH_LABEL)
   return (
     <div className="dock-table-wrap">
       <table className="dock-table lab-design">
@@ -1076,7 +1233,7 @@ function TreatmentTable({ assay }: { assay: "dpph" | "ldh" }) {
           {CODES.map((code) => (
             <tr key={code}>
               <td>{code}</td>
-              <td>{labels[code]}</td>
+              <td>{resolved[code]}</td>
               <td>{treatmentConcentration(assay, code)}</td>
             </tr>
           ))}
@@ -1095,6 +1252,10 @@ function treatmentConcentration(assay: "dpph" | "ldh", code: LabTreatmentCode): 
 }
 
 function MetaLines({ dataset }: { dataset: LabDataset }) {
+  const ldhSetup =
+    dataset.assayType === "ldh"
+      ? normalizeLdhNanoparticleSetup(dataset.characterization?.ldhNanoparticleSetup)
+      : null
   return (
     <dl className="phyto-props">
       <div><dt>Experiment date</dt><dd>{dataset.datePerformed.slice(0, 10)}</dd></div>
@@ -1102,6 +1263,7 @@ function MetaLines({ dataset }: { dataset: LabDataset }) {
       {dataset.datasetName ? <div><dt>Sample / batch</dt><dd>{dataset.datasetName}</dd></div> : null}
       {dataset.instrument ? <div><dt>Instrument</dt><dd>{dataset.instrument}</dd></div> : null}
       {dataset.cellLineName ? <div><dt>Cell line</dt><dd>{dataset.cellLineName}</dd></div> : null}
+      {ldhSetup ? <div><dt>Nanoparticle</dt><dd>{ldhNanoparticleSetupSummary(ldhSetup)}</dd></div> : null}
       {dataset.controlT2Detail ? <div><dt>{dataset.assayType === "dpph" ? "Ascorbic acid" : "Lysis control"}</dt><dd>{dataset.controlT2Detail}</dd></div> : null}
     </dl>
   )
@@ -1216,6 +1378,7 @@ function AssayDialog({
   dataset,
   replicates,
   hepg2,
+  nanoparticle,
   onClose,
   onSave,
 }: {
@@ -1223,6 +1386,7 @@ function AssayDialog({
   dataset?: LabDataset
   replicates: LabReplicate[]
   hepg2?: CellLineRecord
+  nanoparticle?: NanoparticleFormulation | null
   onClose: () => void
   onSave: (input: LabDatasetInput, rows: LabReplicate[]) => Promise<void>
 }) {
@@ -1230,7 +1394,18 @@ function AssayDialog({
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [mounted, setMounted] = useState(false)
-  const labels = assay === "dpph" ? DPPH_LABEL : LDH_LABEL
+  const ldhSetupPreview: LdhNanoparticleSetup | null =
+    assay === "ldh" && draft.nanoparticleChoice === "skip"
+      ? { choice: "skip", source: "skipped" }
+      : assay === "ldh" && draft.nanoparticleChoice === "include"
+        ? {
+            choice: "include",
+            treatmentLabel: draft.nanoparticleTreatment.trim() || undefined,
+            source: draft.nanoparticleRecordId ? "study_record" : "researcher_specified",
+            ...(draft.nanoparticleRecordId ? { nanoparticleRecordId: draft.nanoparticleRecordId } : {}),
+          }
+        : null
+  const labels = assay === "dpph" ? DPPH_LABEL : ldhLabelsForSetup(ldhSetupPreview)
 
   useEffect(() => {
     setMounted(true)
@@ -1291,7 +1466,109 @@ function AssayDialog({
           {assay === "dpph" ? (
             <label>Ascorbic acid concentration (µg/mL)<input value={draft.ascorbic} onChange={set("ascorbic")} inputMode="decimal" /></label>
           ) : (
-            <label>Maximum LDH release reagent<input value={draft.lysisNote} onChange={set("lysisNote")} placeholder="Record the reagent used" /></label>
+            <>
+              <div
+                style={{
+                  margin: "0.35rem 0 0.75rem",
+                  padding: "0.75rem 0.85rem",
+                  borderRadius: 8,
+                  border: "1px solid #e2e8f0",
+                  background: "#f8fafc",
+                }}
+              >
+                <p style={{ margin: 0, fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "#64748b", fontWeight: 700 }}>
+                  Cell line
+                </p>
+                <p style={{ margin: "0.25rem 0 0", fontSize: 14, fontWeight: 600, color: "#0f172a" }}>
+                  {hepg2?.name ?? "HepG2 is not selected"}
+                </p>
+                <p style={{ margin: "0.85rem 0 0.45rem", fontSize: 13, fontWeight: 600, color: "#0f172a" }}>
+                  Include Nanoparticle?
+                </p>
+                <p className="phyto-caption" style={{ marginBottom: "0.55rem" }}>
+                  Optional step after cell-line selection. Choose Yes to record the nanoparticle treatment used, or Skip for a
+                  non-nanoparticle LDH setup. This does not invent absorbance or Selectivity Index values.
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem" }}>
+                  <button
+                    type="button"
+                    className="phyto-select"
+                    data-on={draft.nanoparticleChoice === "include" ? "true" : "false"}
+                    disabled={busy}
+                    onClick={() =>
+                      setDraft((current) => ({
+                        ...current,
+                        nanoparticleChoice: "include",
+                        nanoparticleTreatment:
+                          current.nanoparticleTreatment.trim() ||
+                          nanoparticle?.systemName ||
+                          "",
+                        nanoparticleRecordId: current.nanoparticleRecordId || nanoparticle?.id || "",
+                      }))
+                    }
+                  >
+                    Yes, Include Nanoparticle
+                  </button>
+                  <button
+                    type="button"
+                    className="phyto-select"
+                    data-on={draft.nanoparticleChoice === "skip" ? "true" : "false"}
+                    disabled={busy}
+                    onClick={() =>
+                      setDraft((current) => ({
+                        ...current,
+                        nanoparticleChoice: "skip",
+                        nanoparticleTreatment: "",
+                        nanoparticleRecordId: "",
+                      }))
+                    }
+                  >
+                    No, Skip
+                  </button>
+                </div>
+                {draft.nanoparticleChoice === "include" ? (
+                  <div style={{ marginTop: "0.7rem", display: "grid", gap: "0.55rem" }}>
+                    {nanoparticle ? (
+                      <button
+                        type="button"
+                        className="phyto-select"
+                        data-on={draft.nanoparticleRecordId === nanoparticle.id ? "true" : "false"}
+                        disabled={busy}
+                        onClick={() =>
+                          setDraft((current) => ({
+                            ...current,
+                            nanoparticleRecordId: nanoparticle.id,
+                            nanoparticleTreatment: nanoparticle.systemName || current.nanoparticleTreatment,
+                          }))
+                        }
+                      >
+                        Use study record: {nanoparticle.systemName}
+                      </button>
+                    ) : (
+                      <p className="dock-note" style={{ margin: 0 }}>
+                        No study nanoparticle formulation is on file. Specify the treatment used below, or add one in Research
+                        Setup.
+                      </p>
+                    )}
+                    <label style={{ margin: 0 }}>
+                      Nanoparticle treatment
+                      <input
+                        value={draft.nanoparticleTreatment}
+                        onChange={set("nanoparticleTreatment")}
+                        placeholder="e.g. Chitosan–TPP nanoparticle system"
+                        required={draft.nanoparticleChoice === "include"}
+                      />
+                    </label>
+                  </div>
+                ) : null}
+                {draft.nanoparticleChoice === "skip" ? (
+                  <p className="dock-note" style={{ margin: "0.65rem 0 0" }}>
+                    Proceeding without nanoparticle treatment. Sample labels will show HepatoTea (no nanoparticle).
+                  </p>
+                ) : null}
+              </div>
+              <label>Maximum LDH release reagent<input value={draft.lysisNote} onChange={set("lysisNote")} placeholder="Record the reagent used" /></label>
+            </>
           )}
           <div className="dock-table-wrap">
             <table className="dock-table lab-grid">
@@ -1342,6 +1619,12 @@ function AssayDialog({
             <label>IC50 unit<input value={draft.ic50Unit} onChange={set("ic50Unit")} placeholder="µg/mL" /></label>
           </div>
           <label>IC50 method<input value={draft.ic50Method} onChange={set("ic50Method")} placeholder="Method used outside HEPATOTEA" /></label>
+          {assay === "ldh" ? (
+            <p className="dock-note">
+              Selectivity Index is not calculated from LDH absorbance alone. After save, the SI display reflects this
+              nanoparticle include/skip setup without inventing a comparator ratio.
+            </p>
+          ) : null}
           <label>Notes<textarea value={draft.notes} onChange={set("notes")} rows={2} /></label>
           {message ? <p role="alert">{message}</p> : null}
         </form>
@@ -1582,6 +1865,8 @@ function draftFromDataset(assay: "dpph" | "ldh", dataset: LabDataset | undefined
     grid[row.treatmentCode][index] = String(value)
   }
   const t2 = replicates.find((row) => row.treatmentCode === "T2" && row.concentration != null)
+  const ldhSetup =
+    assay === "ldh" ? normalizeLdhNanoparticleSetup(dataset.characterization?.ldhNanoparticleSetup) : null
   return {
     ...draft,
     date: dataset.datePerformed.slice(0, 10),
@@ -1595,6 +1880,9 @@ function draftFromDataset(assay: "dpph" | "ldh", dataset: LabDataset | undefined
     ic50Unit: dataset.ic50?.unit ?? "",
     ic50Method: dataset.ic50?.method ?? "",
     grid,
+    nanoparticleChoice: ldhSetup?.choice ?? "",
+    nanoparticleTreatment: ldhSetup?.treatmentLabel ?? "",
+    nanoparticleRecordId: ldhSetup?.nanoparticleRecordId ?? "",
   }
 }
 
@@ -1605,6 +1893,21 @@ function buildAssayInput(
 ): { input: LabDatasetInput; rows: LabReplicate[] } {
   if (!draft.date.trim()) throw new Error("Experiment date is required.")
   if (assay === "ldh" && !hepg2) throw new Error("Experimental LDH uses HepG2. Select HepG2 in Research Setup before recording this assay.")
+  const ldhNanoparticleSetup =
+    assay === "ldh"
+      ? validateLdhNanoparticleSetup(
+          draft.nanoparticleChoice === "include"
+            ? {
+                choice: "include",
+                treatmentLabel: draft.nanoparticleTreatment,
+                nanoparticleRecordId: draft.nanoparticleRecordId || undefined,
+                source: draft.nanoparticleRecordId ? "study_record" : "researcher_specified",
+              }
+            : draft.nanoparticleChoice === "skip"
+              ? { choice: "skip", source: "skipped" }
+              : null,
+        )
+      : null
   const rawKey = assay === "dpph" ? "absorbance" : "absorbanceA490"
   const formula = assay === "dpph" ? DPPH_SCAVENGING_FORMULA : LDH_CYTOTOXICITY_FORMULA
   let ascorbic: number | undefined
@@ -1673,6 +1976,9 @@ function buildAssayInput(
     treatmentSummaries: derived.summaries,
     observations: [],
     ic50,
+    ...(ldhNanoparticleSetup
+      ? { characterization: { ldhNanoparticleSetup } }
+      : {}),
     notes: draft.notes.trim() || undefined,
     status: "final",
     provenance: {

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { ArrowLeft, ArrowRight } from "lucide-react"
 import { useAuth } from "@/components/providers/AuthProvider"
@@ -99,13 +99,19 @@ export function StudyWorkspace({ studyId, slug }: { studyId: string; slug: strin
     void selectStudy(studyId)
   }, [authLoading, studyLoading, known, matched, selectStudy, studyId])
 
-  const goTab = (nextTab: string) => {
-    router.push(studyPath(studyId, step.id, nextTab), { scroll: false })
-  }
+  const goTab = useCallback(
+    (nextTab: string) => {
+      router.push(studyPath(studyId, step.id, nextTab), { scroll: false })
+    },
+    [router, studyId, step.id],
+  )
 
-  const goStep = (stepId: StepId) => {
-    router.push(studyPath(studyId, stepId), { scroll: false })
-  }
+  const goStep = useCallback(
+    (nextStepId: StepId) => {
+      router.push(studyPath(studyId, nextStepId), { scroll: false })
+    },
+    [router, studyId],
+  )
 
   const upcoming = nextStep(step.id)
   const prior = previousStep(step.id)

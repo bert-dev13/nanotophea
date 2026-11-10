@@ -28,25 +28,75 @@ export function round(value: number, digits = 2): number {
   return Math.round(value * factor) / factor
 }
 
-export function prototypeFactor(endpoint: string, features: PredictionFeatures): number {
-  const affinity = features.docking.find((row) => Number.isFinite(row.affinityKcalMol))?.affinityKcalMol
-  const identity = demonstrationFactor([
-    endpoint,
+export function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.min(1, Math.max(0, value))
+}
+
+/**
+ * Exploratory identity factor for MTT / LDH / ROS / BAX demonstration curves.
+ * Uses only recorded compound / cell-line / target identity fields.
+ * Docking affinities are intentionally excluded — ligand–receptor ΔG must not
+ * manufacture viability, LDH release, ROS, or apoptosis assay outcomes.
+ * DPPH and Hippo–YAP use their own endpoint-specific factor functions.
+ */
+export function exploratoryIdentityFactor(endpoint: string, features: PredictionFeatures): number {
+  return demonstrationFactor([
+    `${endpoint}-exploratory-identity`,
+    features.phytochemicalId,
     features.phytochemicalName,
     features.pubchemCid,
     features.molecularWeight,
     features.formula,
+    features.cellLineId,
     features.cellLineName,
     features.targetProteinIds.join(","),
-    ...Object.keys(features.admeDescriptors).sort(),
   ])
-  if (affinity == null) return identity
-  const scaled = Math.min(1, Math.max(0, (-affinity - 4) / 8))
-  return (identity + scaled) / 2
+}
+
+/** @deprecated Prefer exploratoryIdentityFactor — kept as an alias without docking. */
+export function prototypeFactor(endpoint: string, features: PredictionFeatures): number {
+  return exploratoryIdentityFactor(endpoint, features)
 }
 
 export const PROTOTYPE_ASSUMPTIONS =
-  "Hill-style concentration response scaled from the compound identity and recorded descriptors or docking affinity."
+  "Exploratory Hill-style demonstration curve from recorded compound/cell-line/target identity only. Not a validated assay model. Docking affinities are not used as assay drivers."
+
+/** Count atoms for an element symbol in a molecular formula (e.g. O in C15H10O5 → 5). */
+export function countElementAtoms(formula: string | undefined, element: string): number {
+  if (!formula) return 0
+  const escaped = element.replace(/[^A-Za-z]/g, "")
+  if (!escaped) return 0
+  const match = formula.match(new RegExp(`${escaped}(\\d*)`))
+  if (!match) return 0
+  return match[1] ? Number(match[1]) : 1
+}
+
+/** Read a numeric ADME / descriptor value under any of the accepted keys. */
+export function numericDescriptor(
+  features: PredictionFeatures,
+  keys: string[],
+): number | undefined {
+  for (const key of keys) {
+    const direct = features.admeDescriptors[key]
+    if (typeof direct === "number" && Number.isFinite(direct)) return direct
+    if (typeof direct === "string") {
+      const parsed = Number.parseFloat(direct)
+      if (Number.isFinite(parsed)) return parsed
+    }
+    const found = Object.entries(features.admeDescriptors).find(
+      ([name]) => name.toLowerCase() === key.toLowerCase(),
+    )
+    if (!found) continue
+    const value = found[1]
+    if (typeof value === "number" && Number.isFinite(value)) return value
+    if (typeof value === "string") {
+      const parsed = Number.parseFloat(value)
+      if (Number.isFinite(parsed)) return parsed
+    }
+  }
+  return undefined
+}
 
 export function inputFeatureLines(features: PredictionFeatures): string[] {
   const lines = [`Compound ${features.phytochemicalName}`]

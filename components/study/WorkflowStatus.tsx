@@ -10,7 +10,6 @@ import {
   useState,
   type ReactNode,
 } from "react"
-import { usePathname } from "next/navigation"
 import { useAuth } from "@/components/providers/AuthProvider"
 import { useStudy } from "@/components/providers/StudyProvider"
 import { toUserFacingError } from "@/lib/errors/userFacing"
@@ -26,7 +25,6 @@ interface WorkflowStatusValue {
 const WorkflowStatusContext = createContext<WorkflowStatusValue | null>(null)
 
 export function WorkflowStatusProvider({ children }: { children: ReactNode }) {
-  const pathname = usePathname()
   const { user, loading: authLoading } = useAuth()
   const { activeStudy, loading: studyLoading } = useStudy()
   const studyId = activeStudy?.id ?? null
@@ -56,10 +54,11 @@ export function WorkflowStatusProvider({ children }: { children: ReactNode }) {
       }
 
       const now = Date.now()
+      // Coalesce rapid onChanged + studyStamp updates while researchers select catalogs.
       if (
         !options?.force &&
         lastFetchedRef.current?.studyId === requested &&
-        now - lastFetchedRef.current.time < 1200
+        now - lastFetchedRef.current.time < 2500
       ) {
         return lastFetchedRef.current.readiness
       }

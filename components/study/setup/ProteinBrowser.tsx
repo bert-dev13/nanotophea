@@ -9,12 +9,7 @@ import { dockingProfileReport, dockingSystemLabels, isCompleteDockingProfile, pr
 import { dockingSetupReason, unsupportedTargetsNeedWarning } from "@/lib/docking/targetSetup"
 import type { Protein } from "@/lib/domain/models"
 import { toUserFacingError } from "@/lib/errors/userFacing"
-import dynamic from "next/dynamic"
-
-const ProteinViewer3D = dynamic(
-  () => import("@/lib/mol3d").then((m) => m.ProteinViewer3D),
-  { ssr: false, loading: () => <div className="h-[280px] flex items-center justify-center text-xs text-slate-400">Loading 3D structure…</div> }
-)
+import { DeferredProteinViewer } from "@/components/study/DeferredMolecularViewer"
 import { createProtein, deleteProtein, listProteins } from "@/lib/repositories/researchDataRepository"
 import { useRcsbStructure } from "@/lib/scientific/client"
 
@@ -81,18 +76,26 @@ export function ProteinBrowser({
     }
   }, [])
 
+  const studyId = activeStudy?.id ?? null
+  const activeStudyRef = useRef(activeStudy)
+  activeStudyRef.current = activeStudy
+
   const load = useCallback(async () => {
-    if (!activeStudy) return
+    const study = activeStudyRef.current
+    if (!study) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
     setError(null)
     try {
-      setRows(await listProteins(activeStudy.id))
+      setRows(await listProteins(study.id))
     } catch (e) {
       setError(toUserFacingError(e, "Could not load target proteins"))
     } finally {
       setLoading(false)
     }
-  }, [activeStudy])
+  }, [studyId])
 
   useEffect(() => {
     void load()
@@ -460,9 +463,9 @@ export function ProteinBrowser({
               <section className="phyto-stage">
                 <h3>3D protein structure</h3>
                 {viewing.key === "lats1" ? (
-                  <ProteinViewer3D key="LATS1_AF" pdbId="LATS1_AF" name={viewing.name} height={320} quiet />
+                  <DeferredProteinViewer key="LATS1_AF" pdbId="LATS1_AF" name={viewing.name} height={320} quiet />
                 ) : viewing.pdbId ? (
-                  <ProteinViewer3D key={viewing.pdbId} pdbId={viewing.pdbId} name={viewing.name} height={320} quiet />
+                  <DeferredProteinViewer key={viewing.pdbId} pdbId={viewing.pdbId} name={viewing.name} height={320} quiet />
                 ) : (
                   <p className="phyto-missing">This library record has no PDB ID.</p>
                 )}

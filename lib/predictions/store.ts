@@ -1,6 +1,14 @@
 import type { PredictionConcentrationUnit, PredictionRunInput } from "@/lib/domain/models"
 import { defaultProvenance } from "@/lib/domain/provenance"
+import {
+  acknowledgementToInputParameters,
+  type ExploratoryAcknowledgementRecord,
+} from "@/lib/predictions/acknowledgement"
 import type { PrototypePredictionResult } from "@/lib/predictions/prototype/types"
+import {
+  rosOxidativeTargetsToInputParameters,
+  type RosOxidativeTargetSelection,
+} from "@/lib/predictions/rosOxidativeTargets"
 import type { PredictionEngineResult } from "@/lib/predictions/types"
 
 export const PROTOTYPE_DISCLAIMER =
@@ -76,13 +84,48 @@ export function storedPredictionFromEngine(result: PredictionEngineResult): Pred
 export function storedSimulationFromPrototype(
   result: PrototypePredictionResult,
   features: { phytochemicalId: string; cellLineId?: string; targetProteinIds: string[] },
+  options?: {
+    proteinId?: string
+    cellLineId?: string
+    /** Server-stamped acknowledgement from /api/scientific/predictions. */
+    acknowledgement?: ExploratoryAcknowledgementRecord | null
+    /**
+     * ROS investigation context only. Never passed into simulateRos features /
+     * targetProteinIds — docking affinity must not drive the ROS index.
+     */
+    rosOxidativeTargets?: RosOxidativeTargetSelection[] | null
+  },
 ): PredictionRunInput {
   const { concentrationUnit, points } = seriesPoints(result.series)
-  const ic50 = Object.entries(result.outputs).find(([key]) => /ic50/i.test(key))
-  const maximum = Object.entries(result.outputs).find(([key]) => /maximum/i.test(key))
-  const teac = result.outputs.TEAC
-  const selectivity = Object.entries(result.outputs).find(([key]) => /selectivity/i.test(key))
-  const inputParameters: Record<string, string | number | boolean | null> = {}
+  // Never promote exploratory Hill midpoints into summaryIc50 as if fitted.
+  // Never persist TEAC / selectivity index without calibration or paired IC50 inputs.
+  const maximum =
+    result.endpoint === "dpph"
+      ? Object.entries(result.outputs).find(([key]) => /maximum scavenging/i.test(key))
+      : Object.entries(result.outputs).find(([key]) => /maximum metabolic inhibition/i.test(key))
+  const exploratoryMidpoint = Object.entries(result.outputs).find(([key]) => /exploratory hill midpoint/i.test(key))
+  const cellLineId = options?.cellLineId ?? features.cellLineId
+  const proteinId =
+    options?.proteinId ??
+    ((result.endpoint === "bax" || result.endpoint === "hippo_yap") && features.targetProteinIds[0]
+      ? features.targetProteinIds[0]
+      : undefined)
+  const inputParameters: Record<string, string | number | boolean | null> = {
+    "meta:endpoint": result.endpoint,
+    "meta:evidenceClass": "SIMULATION",
+    "meta:method": result.method,
+    "meta:modelVersion": result.modelVersion,
+  }
+  if (options?.acknowledgement?.acknowledgedExploratory) {
+    Object.assign(inputParameters, acknowledgementToInputParameters(options.acknowledgement))
+  }
+  if (result.endpoint === "ros" && options?.rosOxidativeTargets) {
+    Object.assign(inputParameters, rosOxidativeTargetsToInputParameters(options.rosOxidativeTargets))
+  }
+  if (exploratoryMidpoint) {
+    inputParameters["meta:exploratoryHillMidpoint"] = exploratoryMidpoint[1].value
+    inputParameters["meta:exploratoryHillMidpointUnit"] = exploratoryMidpoint[1].unit
+  }
   for (const [key, item] of Object.entries(result.outputs)) {
     inputParameters[`output:${key}`] = item.value
     inputParameters[`unit:${key}`] = item.unit
@@ -92,14 +135,9 @@ export function storedSimulationFromPrototype(
     module: result.endpoint,
     runName: result.modelName,
     compoundId: features.phytochemicalId,
-    ...(features.cellLineId && result.endpoint !== "dpph" ? { cellLineId: features.cellLineId } : {}),
-    ...((result.endpoint === "bax" || result.endpoint === "hippo_yap") && features.targetProteinIds[0]
-      ? { proteinId: features.targetProteinIds[0] }
-      : {}),
-    ...(ic50 ? { summaryIc50: ic50[1].value, summaryIc50Unit: ic50[1].unit } : {}),
+    ...(cellLineId && result.endpoint !== "dpph" ? { cellLineId } : {}),
+    ...(proteinId && (result.endpoint === "bax" || result.endpoint === "hippo_yap") ? { proteinId } : {}),
     ...(maximum ? { summaryMaximum: maximum[1].value, summaryMaximumUnit: maximum[1].unit } : {}),
-    ...(teac ? { teac: `${teac.value} ${teac.unit}` } : {}),
-    ...(selectivity ? { selectivityIndex: `${selectivity[1].value} ${selectivity[1].unit}` } : {}),
     ...(result.note ? { pathwayEffect: result.note } : {}),
     methodName: result.modelName,
     methodVersion: result.modelVersion,

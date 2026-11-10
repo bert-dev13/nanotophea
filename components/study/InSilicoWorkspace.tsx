@@ -8,16 +8,14 @@ import { useStudy } from "@/components/providers/StudyProvider"
 import { EvidenceBadge } from "@/components/ui/EvidenceBadge"
 import { AdmeAssessmentPanel } from "@/components/study/AdmeAssessmentPanel"
 import { AdmeProgress, startAssessmentStages, type AssessmentStageView } from "@/components/study/AdmeProgress"
+import { PhytochemicalAnalysisViewToggle } from "@/components/study/PhytochemicalAnalysisViewToggle"
+import { TeaFormulationCombinedPanel } from "@/components/study/TeaFormulationCombinedPanel"
+import { usePhytochemicalAnalysisView } from "@/components/study/usePhytochemicalAnalysisView"
 import { admeAssessmentService, hardcodedAdmeAssessment, PROTOTYPE_ADME_PROVIDER, PROTOTYPE_ADME_UNAVAILABLE } from "@/lib/adme/assessmentService"
 import { requestAutomaticAdme } from "@/lib/adme/client"
 import { isCompletedScreeningRun, isPrototypeAdmeRun, latestProviderRun, latestScreeningRun, screenedCompoundIds } from "@/lib/adme/service"
 import { ADME_ENGINE_UNAVAILABLE, ADME_NO_CID, ADME_PUBCHEM_UNAVAILABLE } from "@/lib/adme/types"
-import dynamic from "next/dynamic"
-
-const CompoundViewer3D = dynamic(
-  () => import("@/lib/mol3d").then((m) => m.CompoundViewer3D),
-  { ssr: false, loading: () => <div className="h-[280px] flex items-center justify-center text-xs text-slate-400">Loading 3D structure…</div> }
-)
+import { DeferredCompoundViewer } from "@/components/study/DeferredMolecularViewer"
 import type { AdmetRun, Compound } from "@/lib/domain/models"
 import { toUserFacingError } from "@/lib/errors/userFacing"
 import { listCompounds } from "@/lib/repositories/researchDataRepository"
@@ -139,6 +137,10 @@ export function InSilicoWorkspace({
   const handleChanged = onChangedAction ?? (() => {})
   const { user } = useAuth()
   const { activeStudy } = useStudy()
+  const studyId = activeStudy?.id ?? null
+  const activeStudyRef = useRef(activeStudy)
+  activeStudyRef.current = activeStudy
+  const { viewMode, setViewMode } = usePhytochemicalAnalysisView(studyId)
   const [rows, setRows] = useState<Compound[]>([])
   const [runs, setRuns] = useState<AdmetRun[]>([])
   const [admeLoadFailed, setAdmeLoadFailed] = useState(false)
@@ -156,29 +158,38 @@ export function InSilicoWorkspace({
   const runsRef = useRef(runs)
   runsRef.current = runs
   const generationRef = useRef<Record<string, number>>({})
-  const pubchem = usePubChemCompounds(rows.map((row) => row.pubchemCid))
+  const loadGenerationRef = useRef(0)
+  const viewingCid = rows.find((row) => row.id === viewId)?.pubchemCid
+  const pubchem = usePubChemCompounds(viewingCid != null ? [viewingCid] : [])
   const pubchemRef = useRef(pubchem)
   pubchemRef.current = pubchem
 
-  const load = useCallback(async () => {
-    if (!activeStudy) return
-    setLoading(true)
+  const load = useCallback(async (options?: { soft?: boolean }) => {
+    const study = activeStudyRef.current
+    const generation = ++loadGenerationRef.current
+    if (!study) {
+      setLoading(false)
+      return
+    }
+    if (!options?.soft) setLoading(true)
     setError(null)
     try {
       const [compounds, admeRuns] = await Promise.all([
-        listCompounds(activeStudy.id),
-        listAdmetRuns(activeStudy.id).catch(() => []),
+        listCompounds(study.id),
+        listAdmetRuns(study.id).catch(() => []),
       ])
+      if (generation !== loadGenerationRef.current) return
       setRows(compounds)
       setRuns(admeRuns)
       setAdmeLoadFailed(false)
       setViewId((current) => (compounds.some((row) => row.id === current) ? current : compounds[0]?.id ?? ""))
     } catch (e) {
+      if (generation !== loadGenerationRef.current) return
       setError(toUserFacingError(e, "Could not load the selected phytochemicals"))
     } finally {
-      setLoading(false)
+      if (generation === loadGenerationRef.current) setLoading(false)
     }
-  }, [activeStudy])
+  }, [studyId])
 
   const refreshAdme = async (studyId: string) => {
     try {
@@ -470,6 +481,13 @@ export function InSilicoWorkspace({
               PubChem physicochemical descriptors, Lipinski drug-likeness rules, and ADME assessments for each selected phytochemical.
             </p>
             <AskAiLink context="insilico" />
+            {!loading && rows.length > 0 ? (
+              <PhytochemicalAnalysisViewToggle
+                mode={viewMode}
+                onChange={setViewMode}
+                compoundCount={rows.length}
+              />
+            ) : null}
           </div>
         </div>
         <div className="nano-setup-progress" aria-live="polite">
@@ -750,8 +768,35 @@ export function InSilicoWorkspace({
               </div>
             </aside>
 
-            {/* RIGHT DETAIL: Selected Compound Screening View */}
-            {viewing ? (
+            {/* RIGHT DETAIL: Individual compound or combined tea formulation */}
+            {viewMode === "combined" ? (
+              <TeaFormulationCombinedPanel
+                stageLabel="in-silico screening"
+                compounds={rows.map((row) => ({
+                  id: row.id,
+                  name: row.name,
+                  pubchemCid: row.pubchemCid,
+                  formula: row.formula,
+                  chemicalClass: row.chemicalClass,
+                  smiles: row.smiles,
+                }))}
+                resultRows={rows.map((row) => {
+                  const status = getCompoundScreeningStatus(row, runs, live)
+                  return {
+                    compoundId: row.id,
+                    context: "Lipinski · ADME screening",
+                    result: status.label,
+                    detail: status.detail,
+                    evidence: status.isDockingReady ? "Docking-ready (individual compound)" : "Individual compound status",
+                  }
+                })}
+                onInspectCompound={(compoundId) => {
+                  setViewId(compoundId)
+                  setViewMode("individual")
+                  setMobilePane("detail")
+                }}
+              />
+            ) : viewing ? (
               <CompoundScreen
                 key={viewing.id}
                 compound={viewing}
@@ -1030,7 +1075,7 @@ function CompoundScreen({
         <section className="phyto-stage">
           <h3>3D Conformation & Molecular Structure</h3>
           {compound.pubchemCid != null ? (
-            <CompoundViewer3D cid={compound.pubchemCid} name={compound.name} height={300} quiet />
+            <DeferredCompoundViewer cid={compound.pubchemCid} name={compound.name} height={300} quiet />
           ) : (
             <div style={{ height: "300px", display: "grid", placeItems: "center", background: "var(--surface-secondary)", borderRadius: "10px", border: "1px dashed var(--border)" }}>
               <p className="phyto-missing">No 3D structure is available for this compound.</p>

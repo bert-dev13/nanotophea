@@ -26,16 +26,22 @@ export function CellLineBrowser({
   onChangedAction,
   onBackAction,
   onContinueAction,
+  onContinueToInSilicoAction,
+  onContinueToNanoparticleAction,
   continueDisabled,
 }: {
   onChangedAction?: () => void
   onBackAction?: () => void
+  /** @deprecated Prefer dual nanoparticle / In-Silico actions. */
   onContinueAction?: () => void
+  onContinueToInSilicoAction?: () => void
+  onContinueToNanoparticleAction?: () => void
   continueDisabled?: boolean
 }) {
   const handleChanged = onChangedAction ?? (() => {})
   const handleBack = onBackAction ?? (() => {})
-  const handleContinue = onContinueAction ?? (() => {})
+  const handleContinueInSilico = onContinueToInSilicoAction ?? onContinueAction ?? (() => {})
+  const handleContinueNanoparticle = onContinueToNanoparticleAction
   const { user } = useAuth()
   const { activeStudy, updateActiveStudy } = useStudy()
   const [rows, setRows] = useState<CellLineRecord[]>([])
@@ -63,14 +69,23 @@ export function CellLineBrowser({
     }
   }, [])
 
+  const studyId = activeStudy?.id ?? null
+  const activeStudyRef = useRef(activeStudy)
+  activeStudyRef.current = activeStudy
+  const [batchBusy, setBatchBusy] = useState(false)
+
   const load = useCallback(async () => {
-    if (!activeStudy) return
+    const study = activeStudyRef.current
+    if (!study) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
     setError(null)
     try {
       const [lines, labs] = await Promise.all([
-        listCellLines(activeStudy.id),
-        listLabDatasets(activeStudy.id).catch(() => [] as LabDataset[]),
+        listCellLines(study.id),
+        listLabDatasets(study.id).catch(() => [] as LabDataset[]),
       ])
       setRows(lines)
       setDatasets(labs)
@@ -79,7 +94,7 @@ export function CellLineBrowser({
     } finally {
       setLoading(false)
     }
-  }, [activeStudy])
+  }, [studyId])
 
   useEffect(() => {
     void load()
@@ -189,6 +204,85 @@ export function CellLineBrowser({
     [activeStudy, user, byName, rows, updateActiveStudy, triggerDebouncedChanged]
   )
 
+  const selectAllVisible = useCallback(async () => {
+    if (!activeStudy || !user) return
+    const unselected = visible.filter((item) => !byName.has(item.name))
+    if (!unselected.length) return
+    setBatchBusy(true)
+    setError(null)
+    const prevRows = rows
+    const optimistic = unselected.map((item) => ({
+      id: `temp-${item.key}-${Date.now()}-${Math.random()}`,
+      studyId: activeStudy.id,
+      name: item.name,
+      fullName: item.fullName,
+      organism: item.organism,
+      tissueOrigin: item.tissueOrigin,
+      diseaseContext: item.diseaseContext,
+      lineType: item.lineType,
+      p53Status: item.p53Status,
+      hbvStatus: item.hbvStatus,
+      sourceDatabase: item.source,
+      notes: item.notes,
+      referenceIds: [] as string[],
+      isPrimaryExperimental: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdBy: user.uid,
+      updatedBy: user.uid,
+      provenance: { evidenceClass: "REFERENCE" as const, source: item.source || "Catalog" },
+    }))
+    setRows((current) => [...current, ...optimistic])
+    try {
+      await Promise.allSettled(
+        unselected.map((item) =>
+          createCellLine(activeStudy.id, { id: user.uid }, {
+            name: item.name,
+            fullName: item.fullName,
+            organism: item.organism,
+            tissueOrigin: item.tissueOrigin,
+            diseaseContext: item.diseaseContext,
+            lineType: item.lineType,
+            p53Status: item.p53Status,
+            hbvStatus: item.hbvStatus,
+            sourceDatabase: item.source,
+            notes: item.notes,
+            referenceIds: [],
+            isPrimaryExperimental: false,
+            provenance: item.source ? { source: item.source } : undefined,
+          }),
+        ),
+      )
+      const fresh = await listCellLines(activeStudy.id)
+      setRows(fresh)
+      if (fresh[0]) await updateActiveStudy({ primaryCellLine: fresh[0].name })
+      triggerDebouncedChanged()
+    } catch (e) {
+      setRows(prevRows)
+      setError(toUserFacingError(e, "Could not complete batch selection"))
+    } finally {
+      setBatchBusy(false)
+    }
+  }, [activeStudy, user, visible, byName, rows, updateActiveStudy, triggerDebouncedChanged])
+
+  const clearAllSelected = useCallback(async () => {
+    if (!activeStudy || !user || rows.length === 0) return
+    setBatchBusy(true)
+    setError(null)
+    const prevRows = rows
+    setRows([])
+    try {
+      await Promise.allSettled(prevRows.map((row) => deleteCellLine(activeStudy.id, row.id, { id: user.uid })))
+      setRows(await listCellLines(activeStudy.id))
+      triggerDebouncedChanged()
+    } catch (e) {
+      setRows(prevRows)
+      setError(toUserFacingError(e, "Could not clear selections"))
+    } finally {
+      setBatchBusy(false)
+    }
+  }, [activeStudy, user, rows, triggerDebouncedChanged])
+
   const open = useCallback((item: CatalogCellLine) => {
     setViewKey(item.key)
     setMobilePane("detail")
@@ -213,6 +307,32 @@ export function CellLineBrowser({
             <Search size={14} aria-hidden />
             <input value={query} placeholder="Search cell lines..." onChange={(event) => setQuery(event.target.value)} />
           </label>
+          <div className="flex items-center justify-between gap-2 px-2 py-1.5 text-xs text-slate-500 border-b border-slate-100 dark:border-slate-800">
+            <span className="font-medium text-slate-600 dark:text-slate-300">
+              {selectedCount === CATALOG_CELL_LINES.length && CATALOG_CELL_LINES.length > 0
+                ? `All ${selectedCount} selected`
+                : `${selectedCount} of ${CATALOG_CELL_LINES.length} selected`}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="text-emerald-600 dark:text-emerald-400 font-semibold hover:underline cursor-pointer disabled:opacity-40"
+                disabled={loading || batchBusy || visible.every((item) => byName.has(item.name))}
+                onClick={() => void selectAllVisible()}
+              >
+                {batchBusy ? "Processing..." : `Select All ${filter !== "all" || query ? `(${visible.length})` : ""}`}
+              </button>
+              <span className="text-slate-300 dark:text-slate-700">|</span>
+              <button
+                type="button"
+                className="text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 font-medium cursor-pointer disabled:opacity-40"
+                disabled={loading || batchBusy || selectedCount === 0}
+                onClick={() => void clearAllSelected()}
+              >
+                Clear All
+              </button>
+            </div>
+          </div>
           <div className="phyto-filters" role="tablist" aria-label="Cell line type">
             {FILTERS.map((item) => (
               <button
@@ -342,16 +462,43 @@ export function CellLineBrowser({
           </article>
         ) : null}
       </div>
-      <footer className="phyto-nav">
+      <footer className="phyto-nav" style={{ flexWrap: "wrap", gap: "0.55rem" }}>
         <button type="button" className="phyto-back" onClick={handleBack}>
           <ArrowLeft size={15} aria-hidden />
           Back
         </button>
-        <button type="button" className="phyto-continue" disabled={continueDisabled || loading} onClick={handleContinue}>
-          Continue to In-Silico
-          <ArrowRight size={15} aria-hidden />
-        </button>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", marginLeft: "auto", justifyContent: "flex-end" }}>
+          {handleContinueNanoparticle ? (
+            <button
+              type="button"
+              className="phyto-select"
+              data-on="false"
+              disabled={continueDisabled || loading || rows.length === 0}
+              onClick={handleContinueNanoparticle}
+              title="Optional: configure Chitosan–TPP nanoparticle formulation before In-Silico"
+            >
+              Continue to Nanoparticle Formulation
+              <ArrowRight size={14} aria-hidden />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="phyto-continue"
+            disabled={continueDisabled || loading || rows.length === 0}
+            onClick={handleContinueInSilico}
+            title="Skip nanoparticle formulation and proceed to In-Silico Screening"
+          >
+            Continue to In-Silico
+            <ArrowRight size={15} aria-hidden />
+          </button>
+        </div>
       </footer>
+      {handleContinueNanoparticle ? (
+        <p className="phyto-caption" style={{ marginTop: "0.55rem", textAlign: "right" }}>
+          Nanoparticle formulation is optional. Continue to In-Silico skips it and records that choice. Phytochemicals,
+          proteins, and cell lines stay selected either way.
+        </p>
+      ) : null}
     </div>
   )
 }

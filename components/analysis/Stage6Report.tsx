@@ -9,6 +9,7 @@ import type { StructuredInterpretation } from "@/lib/ai/interpretation-schema"
 import type { LabDataset, LabObservation, PredictionRun } from "@/lib/domain/models"
 import { deriveMttObservations, summarizeObservations } from "@/lib/lab/derivedAssays"
 import { PREDICTION_LAB_ENDPOINTS } from "@/lib/lab/sections"
+import { sanitizedPredictionSummary } from "@/lib/predictions/displaySanitization"
 import type { ExperimentalStatsComputation } from "@/lib/statistics/runAnalysis"
 
 const ENDPOINT_LABEL: Record<string, string> = {
@@ -217,22 +218,8 @@ function genuineDataset(datasets: LabDataset[], endpoint: string): LabDataset | 
 
 function predictionSummary(run: PredictionRun | null): string {
   if (!run) return "Not recorded"
-  if (run.summaryIc50 != null) return `IC50 ${fmt(run.summaryIc50)}${run.summaryIc50Unit ? ` ${run.summaryIc50Unit}` : ""}`
-  if (run.summaryMaximum != null) return withUnit(fmt(run.summaryMaximum), run.summaryMaximumUnit ?? "")
-  const points = [...run.resultPoints].sort((a, b) => a.concentration - b.concentration)
-  if (points.length > 0) {
-    const metric = points[0].metric
-    const same = points.filter((point) => point.metric === metric)
-    if (same.length === 1) return `${metric} ${fmt(same[0].value)} ${same[0].valueUnit}`
-    return `${metric} ${fmt(same[0].value)}–${fmt(same[same.length - 1].value)} ${same[0].valueUnit}`
-  }
-  for (const [key, value] of Object.entries(run.inputParameters ?? {})) {
-    if (!key.startsWith("output:")) continue
-    const label = key.slice("output:".length)
-    const unit = run.inputParameters?.[`unit:${label}`]
-    return `${label} ${value}${unit ? ` ${unit}` : ""}`
-  }
-  return "Recorded"
+  // Sanitized display: exploratory SIMULATION never presents legacy IC50/TEAC/SI as assay truth.
+  return sanitizedPredictionSummary(run)
 }
 
 function labSummary(endpoint: string, dataset: LabDataset | null, review: Stage6Review | undefined): string {
