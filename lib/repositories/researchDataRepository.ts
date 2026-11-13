@@ -952,6 +952,11 @@ export async function saveNanoparticleFormulation(
 
   if (existing) {
     const id = existing.id
+    const existingRecord = await getNanoparticleFormulation(studyId)
+    const preparationProtocol =
+      data.preparationProtocol !== undefined
+        ? data.preparationProtocol
+        : existingRecord?.preparationProtocol ?? null
     const fields: string[] = [
       "system_name = ?",
       "carrier_type = ?",
@@ -960,7 +965,6 @@ export async function saveNanoparticleFormulation(
       "chitosan_concentration_unit = ?",
       "chitosan_molecular_weight = ?",
       "chitosan_mw_unit = ?",
-      "chitosan_molecular_weight = ?",
       "chitosan_deacetylation_degree = ?",
       "chitosan_solvent = ?",
       "chitosan_ph = ?",
@@ -974,6 +978,7 @@ export async function saveNanoparticleFormulation(
       "stirring_duration = ?",
       "temperature = ?",
       "preparation_notes = ?",
+      "preparation_protocol = ?",
       "particle_size_nm = ?",
       "pdi = ?",
       "zeta_potential_mv = ?",
@@ -1013,6 +1018,7 @@ export async function saveNanoparticleFormulation(
       data.stirringDuration ?? null,
       data.temperature ?? null,
       data.preparationNotes ?? null,
+      toJson(preparationProtocol),
       data.particleSizeNm ?? null,
       data.pdi ?? null,
       data.zetaPotentialMv ?? null,
@@ -1051,12 +1057,16 @@ export async function saveNanoparticleFormulation(
       studyId,
       systemName: data.systemName ?? "Chitosan–TPP Nanoparticle System",
       carrierType: data.carrierType ?? "chitosan_tpp",
+      recordType: data.recordType ?? "research",
       chitosanConcentration: data.chitosanConcentration ?? null,
+      chitosanConcentrationUnit: data.chitosanConcentrationUnit ?? "mg/mL",
       chitosanMolecularWeight: data.chitosanMolecularWeight ?? null,
+      chitosanMwUnit: data.chitosanMwUnit ?? "kDa",
       chitosanDeacetylationDegree: data.chitosanDeacetylationDegree ?? null,
       chitosanSolvent: data.chitosanSolvent ?? null,
       chitosanPh: data.chitosanPh ?? null,
       tppConcentration: data.tppConcentration ?? null,
+      tppConcentrationUnit: data.tppConcentrationUnit ?? "mg/mL",
       tppPh: data.tppPh ?? null,
       chitosanTppRatio: data.chitosanTppRatio ?? null,
       mixingMethod: data.mixingMethod ?? null,
@@ -1065,11 +1075,17 @@ export async function saveNanoparticleFormulation(
       stirringDuration: data.stirringDuration ?? null,
       temperature: data.temperature ?? null,
       preparationNotes: data.preparationNotes ?? null,
+      preparationProtocol: data.preparationProtocol ?? null,
       particleSizeNm: data.particleSizeNm ?? null,
       pdi: data.pdi ?? null,
       zetaPotentialMv: data.zetaPotentialMv ?? null,
       encapsulationEfficiencyPercent: data.encapsulationEfficiencyPercent ?? null,
       loadingCapacityPercent: data.loadingCapacityPercent ?? null,
+      instrument: data.instrument ?? null,
+      measurementMethod: data.measurementMethod ?? null,
+      experimentDate: data.experimentDate ?? null,
+      researcher: data.researcher ?? null,
+      sampleBatchId: data.sampleBatchId ?? null,
       characterizationNotes: data.characterizationNotes ?? null,
       computationalStatus: data.computationalStatus ?? "not_configured",
       computationalNotes: data.computationalNotes ?? null,
@@ -1086,12 +1102,12 @@ export async function saveNanoparticleFormulation(
         id, study_id, system_name, carrier_type, record_type,
         chitosan_concentration, chitosan_concentration_unit, chitosan_molecular_weight, chitosan_mw_unit, chitosan_deacetylation_degree, chitosan_solvent, chitosan_ph,
         tpp_concentration, tpp_concentration_unit, tpp_ph,
-        chitosan_tpp_ratio, mixing_method, addition_method, stirring_rate, stirring_duration, temperature, preparation_notes,
+        chitosan_tpp_ratio, mixing_method, addition_method, stirring_rate, stirring_duration, temperature, preparation_notes, preparation_protocol,
         particle_size_nm, pdi, zeta_potential_mv, encapsulation_efficiency_percent, loading_capacity_percent,
         instrument, measurement_method, experiment_date, researcher, sample_batch_id, characterization_notes,
         computational_status, computational_notes,
         provenance, reference_ids, created_at, updated_at, created_by, updated_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         record.id,
         record.studyId,
@@ -1115,6 +1131,7 @@ export async function saveNanoparticleFormulation(
         record.stirringDuration,
         record.temperature,
         record.preparationNotes,
+        toJson(record.preparationProtocol ?? null),
         record.particleSizeNm,
         record.pdi,
         record.zetaPotentialMv,

@@ -27,6 +27,7 @@ import type { PubChemCompound } from "@/lib/scientific/types"
 import type { Compound } from "@/lib/domain/models"
 import { toUserFacingError } from "@/lib/errors/userFacing"
 import { createCompound, deleteCompound, listCompounds, listGlobalPhytochemicals } from "@/lib/repositories/researchDataRepository"
+import { getCachedCompounds, invalidateStudyCatalog } from "@/lib/workflow/studyCatalogCache"
 
 const FILTERS: Array<{ id: "all" | CompoundFilter; label: string }> = [
   { id: "all", label: "All" },
@@ -89,7 +90,7 @@ export function PhytochemicalBrowser({
     setError(null)
     try {
       const [studyRows, globalRows] = await Promise.all([
-        listCompounds(study.id),
+        getCachedCompounds(study.id, () => listCompounds(study.id)),
         listGlobalPhytochemicals(),
       ])
       setRows(studyRows)
@@ -184,6 +185,7 @@ export function PhytochemicalBrowser({
       try {
         if (existing) {
           await deleteCompound(activeStudy.id, existing.id, { id: user.uid })
+          invalidateStudyCatalog(activeStudy.id)
         } else {
           const snapshot = pubchem && pubchem.cid === item.pubchemCid ? pubchem : undefined
           const created = await createCompound(activeStudy.id, { id: user.uid }, {
@@ -204,6 +206,7 @@ export function PhytochemicalBrowser({
           setRows((prev) =>
             prev.map((r) => (r.name.toLowerCase() === item.name.toLowerCase() ? created : r))
           )
+          invalidateStudyCatalog(activeStudy.id)
         }
         triggerDebouncedChanged()
       } catch (e) {
@@ -281,7 +284,8 @@ export function PhytochemicalBrowser({
           })
         })
       )
-      const freshRows = await listCompounds(activeStudy.id)
+      invalidateStudyCatalog(activeStudy.id)
+      const freshRows = await getCachedCompounds(activeStudy.id, () => listCompounds(activeStudy.id), { force: true })
       setRows(freshRows)
       triggerDebouncedChanged()
     } catch (e) {
@@ -304,7 +308,8 @@ export function PhytochemicalBrowser({
       await Promise.allSettled(
         prevRows.map((r) => deleteCompound(activeStudy.id, r.id, { id: user.uid }))
       )
-      const freshRows = await listCompounds(activeStudy.id)
+      invalidateStudyCatalog(activeStudy.id)
+      const freshRows = await getCachedCompounds(activeStudy.id, () => listCompounds(activeStudy.id), { force: true })
       setRows(freshRows)
       triggerDebouncedChanged()
     } catch (e) {

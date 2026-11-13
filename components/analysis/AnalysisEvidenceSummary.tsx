@@ -5,6 +5,10 @@ import { useStudy } from "@/components/providers/StudyProvider"
 import { listLabDatasets } from "@/lib/repositories/labRepository"
 import { listPredictionRuns } from "@/lib/repositories/scientificRunRepository"
 import { getNanoparticleFormulation } from "@/lib/repositories/researchDataRepository"
+import {
+  parseNanoparticlePreparationProtocol,
+  preparationProgress,
+} from "@/lib/setup/nanoparticlePreparationProtocol"
 
 const COMPUTATIONAL = [
   { id: "dpph", label: "DPPH" },
@@ -50,6 +54,14 @@ export function AnalysisEvidenceSummary() {
       const computationalRows: EvidenceRow[] = []
       if (nano) {
         computationalRows.push({ label: "Nanocarrier Protocol", value: nano.systemName })
+        const prep = parseNanoparticlePreparationProtocol(nano.preparationProtocol)
+        const progress = preparationProgress(prep)
+        if (progress.completed + progress.skipped > 0 || prep.ingredients.some((row) => (row.amount ?? "").trim())) {
+          computationalRows.push({
+            label: "Preparation Steps 8–11",
+            value: `${progress.completed} completed · ${progress.skipped} skipped · ${progress.pending} pending`,
+          })
+        }
       }
       for (const item of COMPUTATIONAL) {
         const matches = predictions.filter((run) => (run.endpoint || run.module) === item.id)

@@ -3,7 +3,10 @@
 import { useState, useEffect } from "react"
 import { ExternalLink } from "lucide-react"
 import { useTheme } from "@/components/theme/ThemeProvider"
-import { loadPubChemImageUrl, peekPubChemImageUrl, loadPubChemStructure } from "@/lib/scientific/pubchemClientCache"
+import { loadPubChemImageUrl, loadPubChemStructure } from "@/lib/scientific/pubchemClientCache"
+import { CompoundStructure2D, PubChemImage } from "@/lib/mol2d"
+
+export { CompoundStructure2D }
 
 // ── HTML builders ──────────────────────────────────────────────────────────────
 // Molecules are loaded into 3Dmol.js running inside a srcdoc iframe.
@@ -117,95 +120,6 @@ function StructureUnavailable({ onRetry }: { onRetry: () => void }) {
   )
 }
 
-function PubChemImage({ cid, height, name }: { cid: number; height: number; name: string }) {
-  const [src, setSrc] = useState<string | null>(() => peekPubChemImageUrl(cid) ?? null)
-  const [status, setStatus] = useState<"loading" | "ready" | "error">(() =>
-    peekPubChemImageUrl(cid) ? "ready" : "loading",
-  )
-
-  useEffect(() => {
-    let cancelled = false
-    const cached = peekPubChemImageUrl(cid)
-    if (cached) {
-      setSrc(cached)
-      setStatus("ready")
-      return
-    }
-    setSrc(null)
-    setStatus("loading")
-    loadPubChemImageUrl(cid)
-      .then((url) => {
-        if (cancelled) return
-        setSrc(url)
-        setStatus("ready")
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setSrc(null)
-          setStatus("error")
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [cid])
-
-  return (
-    <div className="w-full h-full flex items-center justify-center relative"
-      style={{ background: "#f0faf7" }}>
-      {status === "loading" && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="w-6 h-6 rounded-full border-2 border-t-transparent animate-spin"
-            style={{ borderColor: "#dde5ef", borderTopColor: "#00a882" }} />
-        </div>
-      )}
-      {status === "error" ? (
-        <p className="text-xs px-3 text-center" style={{ color: "#64748b" }}>
-          2D structure unavailable for {name}.
-        </p>
-      ) : src ? (
-        // Native img avoids Next/Image onLoad races that left Combined view spinning forever.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={src}
-          alt={`${name} 2D structure`}
-          width={height}
-          height={height}
-          style={{ maxHeight: height - 8, maxWidth: "90%", objectFit: "contain", display: "block" }}
-        />
-      ) : null}
-    </div>
-  )
-}
-
-/** Standalone PubChem 2D depiction used by Combined Tea Formulation and other panels. */
-export function CompoundStructure2D({
-  cid,
-  name,
-  height = 160,
-  className,
-}: {
-  cid: number
-  name: string
-  height?: number
-  className?: string
-}) {
-  return (
-    <div
-      className={className}
-      style={{
-        height,
-        overflow: "hidden",
-        borderRadius: 8,
-        border: "1px solid #e2e8f0",
-        background: "#f0faf7",
-      }}
-    >
-      <PubChemImage cid={cid} height={height} name={name} />
-    </div>
-  )
-}
-
 // ── State machine for the viewer ──────────────────────────────────────────────
 
 type ViewState = "idle" | "loading" | "ready" | "error"
@@ -241,6 +155,7 @@ export function CompoundViewer3D({
   height = 320,
   color = "#00d4aa",
   quiet = false,
+  prefer2dWhileLoading = false,
 }: {
   cid: number
   name: string
@@ -248,6 +163,8 @@ export function CompoundViewer3D({
   color?: string
   /** Research-setup viewer: no spin, no live badge. */
   quiet?: boolean
+  /** Show PubChem 2D depiction while the 3D SDF is retrieving. */
+  prefer2dWhileLoading?: boolean
 }) {
   const [mode, setMode] = useState<"3d" | "2d">("3d")
   const [conformer, setConformer] = useState<"3d" | "2d" | null>(null)
@@ -260,6 +177,8 @@ export function CompoundViewer3D({
     setStatus("loading")
     setSrcdoc(null)
     setConformer(null)
+    // Warm 2D cache immediately so the depiction can paint without waiting on SDF.
+    void loadPubChemImageUrl(cid).catch(() => undefined)
     fetchSDF(cid)
       .then((result) => {
         if (cancelled) return
@@ -270,14 +189,18 @@ export function CompoundViewer3D({
         setStatus("ready")
       })
       .catch(() => {
-        if (!cancelled) setStatus("error")
+        if (!cancelled) {
+          setStatus("error")
+          if (prefer2dWhileLoading) setMode("2d")
+        }
       })
     return () => {
       cancelled = true
     }
-  }, [cid, color, quiet, viewKey])
+  }, [cid, color, quiet, viewKey, prefer2dWhileLoading])
 
   const bodyH = height - 40
+  const show2dWhileLoading = prefer2dWhileLoading && status === "loading" && mode === "3d"
 
   return (
     <div className={`relative overflow-hidden border flex flex-col ${quiet ? "rounded-md" : "rounded-2xl"}`}
@@ -288,7 +211,7 @@ export function CompoundViewer3D({
         style={{ borderColor: "rgba(255, 255, 255, 0.08)", background: "rgba(11, 20, 34, 0.85)" }}>
         <div className="flex items-center gap-1.5">
           {(["3d", "2d"] as const).map(m => (
-            <button key={m} onClick={() => setMode(m)}
+            <button key={m} type="button" onClick={() => setMode(m)}
               className="text-[11px] font-bold px-2.5 py-1 rounded-lg border uppercase tracking-wide transition-all"
               style={{
                 borderColor: mode === m ? "#2dd4bf" : "rgba(255, 255, 255, 0.1)",
@@ -328,7 +251,14 @@ export function CompoundViewer3D({
         {mode === "3d" ? (
           <>
             {status === "loading" && (
-              quiet ? (
+              show2dWhileLoading ? (
+                <div className="absolute inset-0">
+                  <PubChemImage cid={cid} height={bodyH} name={name} />
+                  <div className="absolute bottom-2 left-2 right-2 rounded-md border border-slate-700/60 bg-slate-950/80 px-2 py-1 text-[10px] text-slate-300">
+                    Loading 3D conformer…
+                  </div>
+                </div>
+              ) : quiet ? (
                 <div className="phyto-skel phyto-skel--stage" aria-hidden>
                   <i /><i /><i />
                 </div>
@@ -345,12 +275,28 @@ export function CompoundViewer3D({
             )}
             {status === "error" && (
               quiet ? (
-                <StructureUnavailable onRetry={() => setViewKey((n) => n + 1)} />
+                <div className="absolute inset-0 flex flex-col">
+                  <PubChemImage cid={cid} height={bodyH - 36} name={name} />
+                  <div className="flex items-center justify-between gap-2 px-3 py-2 text-[11px] text-slate-400 border-t border-slate-800">
+                    <span>3D structure unavailable for this CID.</span>
+                    <button type="button" className="phyto-retry" onClick={() => setViewKey((n) => n + 1)}>
+                      Retry
+                    </button>
+                  </div>
+                </div>
               ) : (
                 <PubChemImage cid={cid} height={bodyH} name={name} />
               )
             )}
-            {status === "ready" && srcdoc && (
+            {status === "ready" && srcdoc && conformer === "2d" && (
+              <div className="absolute inset-0 flex flex-col">
+                <PubChemImage cid={cid} height={bodyH - 28} name={name} />
+                <p className="px-3 py-1.5 text-[10px] text-amber-200/90 border-t border-amber-500/20 bg-amber-500/10">
+                  No PubChem 3D conformer for CID {cid}. Showing 2D depiction instead.
+                </p>
+              </div>
+            )}
+            {status === "ready" && srcdoc && conformer !== "2d" && (
               <iframe
                 srcDoc={srcdoc}
                 sandbox="allow-scripts"
@@ -368,9 +314,16 @@ export function CompoundViewer3D({
       <div className="absolute bottom-0 left-0 right-0 px-3 py-1 flex justify-between items-center border-t"
         style={{ background: "#f4f7fcee", borderColor: "#dde5ef" }}>
         <span className="text-[10px] font-mono" style={{ color: "#546e8a" }}>
-          PubChem CID {cid} · {conformer === "2d" ? "2D coordinates" : mode === "3d" ? "3D conformer" : "2D depiction"}
+          PubChem CID {cid} ·{" "}
+          {conformer === "2d"
+            ? "2D only (no 3D conformer)"
+            : mode === "3d"
+              ? status === "loading"
+                ? "Loading 3D…"
+                : "3D conformer"
+              : "2D depiction"}
         </span>
-        {mode === "3d" && status === "ready" && (
+        {mode === "3d" && status === "ready" && conformer !== "2d" && (
           <span className="text-[10px] font-mono" style={{ color: "#8098b4" }}>
             Drag to rotate · Scroll to zoom
           </span>

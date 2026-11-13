@@ -303,10 +303,8 @@ export function continueRequirements(stepId: StepId, readiness: StudyReadiness):
     if (readiness.proteins < 1) {
       missing.push("Select at least one target protein before continuing to Biological Predictions.")
     }
-    const expected = requiredDockingPairs(readiness)
-    if (expected > 0 && resolvedDockingPairs(readiness) < expected) {
-      missing.push("Resolve each docking pair before continuing to Biological Predictions. Complete AutoDock Vina, or skip a pair that has no docking profile.")
-    }
+    // Incomplete / failed / unavailable docking pairs do not block Biological Predictions.
+    // Unresolved pairs stay incomplete in readiness and are surfaced via continueAdvisory.
     return missing
   }
 
@@ -346,6 +344,16 @@ export function continueAdvisory(stepId: StepId, readiness: StudyReadiness): str
     if (readiness.compounds > readiness.screenedCompounds && readiness.screenedCompounds >= 1) {
       const excluded = readiness.compounds - readiness.screenedCompounds
       return `${readiness.screenedCompounds} of ${readiness.compounds} phytochemicals completed screening. The remaining ${excluded} compound${excluded > 1 ? "s are" : " is"} pending or excluded from Molecular Docking.`
+    }
+  }
+  if (stepId === "docking") {
+    const expected = requiredDockingPairs(readiness)
+    const resolved = resolvedDockingPairs(readiness)
+    if (expected > 0 && resolved < expected) {
+      const open = expected - resolved
+      const completed = readiness.dockingCompleted
+      const skipped = readiness.dockingSkipped ?? 0
+      return `Docking is incomplete: ${resolved} of ${expected} pairs resolved (${completed} completed · ${skipped} skipped · ${open} still open). You may continue to Biological Predictions. Missing affinities stay unavailable and are not treated as experimental evidence.`
     }
   }
   return null
@@ -461,6 +469,11 @@ export function stepRecordStatus(
     }
     return "incomplete"
   }
+  if (stepId === "docking") {
+    if (stepRequirementsMet("docking", readiness)) return "complete"
+    if (resolvedDockingPairs(readiness) > 0) return "in_progress"
+    return "incomplete"
+  }
   if (stepId === "laboratory" && !stepRequirementsMet("laboratory", readiness)) {
     const started =
       readiness.labRecorded > 0 ||
@@ -476,18 +489,20 @@ export type StepAvailability = "completed" | "current" | "available" | "locked" 
 /**
  * Whether the researcher may open this step.
  * Setup unlocks In-Silico Screening. Docking unlocks after screening, or stays
- * open once its own pairs are resolved. Predictions unlock only after every
- * docking pair is completed or skipped. Laboratory waits for predictions, and
- * Analysis waits for laboratory records. A skipped pair is not a Vina result.
+ * open once its own pairs are resolved. Biological Predictions unlock after
+ * In-Silico Screening — incomplete docking does not permanently block them.
+ * Laboratory waits for predictions, and Analysis waits for laboratory records.
+ * A skipped pair is not a Vina result; unresolved pairs are not fabricated.
  */
 export function canEnterStep(stepId: StepId, readiness: StudyReadiness | null): boolean {
   if (stepId === "setup") return true
   if (!readiness || !stepRequirementsMet("setup", readiness)) return false
   if (stepId === "insilico") return true
   const dockingDone = stepRequirementsMet("docking", readiness)
-  if (stepId === "docking") return dockingDone || stepRequirementsMet("insilico", readiness)
-  if (!dockingDone) return false
-  if (stepId === "predictions") return true
+  const screened = stepRequirementsMet("insilico", readiness)
+  if (stepId === "docking") return dockingDone || screened
+  // Predictions may open once screening is done, even if docking pairs remain open.
+  if (stepId === "predictions") return screened
   if (!stepRequirementsMet("predictions", readiness)) return false
   if (stepId === "laboratory") return true
   if (stepId === "analysis") {
@@ -496,7 +511,6 @@ export function canEnterStep(stepId: StepId, readiness: StudyReadiness | null): 
       readiness.labRecorded > 0 ||
       readiness.labDpph > 0 ||
       readiness.labLdh > 0
-  
     )
   }
   return stepRequirementsMet(stepId, readiness)
@@ -508,11 +522,8 @@ export function stepLockedMessage(stepId: StepId, readiness: StudyReadiness): st
   if (!stepRequirementsMet("setup", readiness)) {
     return "Complete Research Setup before continuing."
   }
-  if (stepId === "docking" && !stepRequirementsMet("insilico", readiness)) {
-    return "Complete In-Silico Screening before continuing to Molecular Docking."
-  }
-  if (!stepRequirementsMet("docking", readiness)) {
-    return "Resolve every docking pair before continuing."
+  if ((stepId === "docking" || stepId === "predictions") && !stepRequirementsMet("insilico", readiness)) {
+    return "Complete In-Silico Screening before continuing."
   }
   if (stepId === "laboratory" || stepId === "analysis") {
     if (!stepRequirementsMet("predictions", readiness)) {

@@ -222,6 +222,7 @@ export function StudyWorkspace({ studyId, slug }: { studyId: string; slug: strin
         checkError={checkError}
         checking={checking}
         missing={missing}
+        advisory={advisory}
         continueDisabled={continueDisabled}
         onBackAction={() => goStep("insilico")}
         onContinueAction={() => void onContinue()}

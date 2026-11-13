@@ -95,10 +95,8 @@ describe("guided continue requirements", () => {
     )
   })
 
-  it("requires an imported result for every docking pair", () => {
-    assert.deepEqual(continueRequirements("docking", emptyReadiness({ compounds: 2, proteins: 2 })), [
-      "Resolve each docking pair before continuing to Biological Predictions. Complete AutoDock Vina, or skip a pair that has no docking profile.",
-    ])
+  it("allows Biological Predictions without requiring every docking pair to finish", () => {
+    assert.deepEqual(continueRequirements("docking", emptyReadiness({ compounds: 2, proteins: 2 })), [])
     assert.deepEqual(
       continueRequirements("docking", emptyReadiness({ compounds: 2, proteins: 2, dockingCompleted: 4 })),
       [],
@@ -113,7 +111,14 @@ describe("guided continue requirements", () => {
       })),
       [],
     )
-    assert.equal(continueAdvisory("docking", emptyReadiness({ compounds: 1, proteins: 1 })), null)
+    assert.match(
+      continueAdvisory("docking", emptyReadiness({ compounds: 2, proteins: 2, dockingCompleted: 1 })) ?? "",
+      /Docking is incomplete/i,
+    )
+    assert.equal(
+      continueAdvisory("docking", emptyReadiness({ compounds: 1, proteins: 1, dockingCompleted: 1 })),
+      null,
+    )
   })
 
   it("does not require fabricated predictions before laboratory validation", () => {
@@ -161,9 +166,22 @@ describe("record-backed step status", () => {
     assert.equal(stepAvailability("predictions", done, false), "locked")
   })
 
-  it("keeps biological predictions locked until every docking pair is complete", () => {
-    const partial = emptyReadiness({ compounds: 2, proteins: 2, cellLines: 1, dockingCompleted: 2 })
-    const finished = emptyReadiness({ compounds: 2, proteins: 2, cellLines: 1, dockingCompleted: 4 })
+  it("unlocks biological predictions after screening even when docking is incomplete", () => {
+    const partial = emptyReadiness({
+      compounds: 2,
+      proteins: 2,
+      cellLines: 1,
+      screenedCompounds: 2,
+      dockingCompleted: 2,
+    })
+    const unscreened = emptyReadiness({ compounds: 2, proteins: 2, cellLines: 1, dockingCompleted: 2 })
+    const finished = emptyReadiness({
+      compounds: 2,
+      proteins: 2,
+      cellLines: 1,
+      screenedCompounds: 2,
+      dockingCompleted: 4,
+    })
     const skipped = emptyReadiness({
       compounds: 1,
       proteins: 2,
@@ -173,7 +191,9 @@ describe("record-backed step status", () => {
       dockingSkipped: 1,
       dockingResolved: 2,
     })
-    assert.equal(stepAvailability("predictions", partial, false), "locked")
+    assert.equal(stepAvailability("predictions", unscreened, false), "locked")
+    assert.equal(stepAvailability("predictions", partial, false), "available")
+    assert.equal(stepRecordStatus("docking", partial), "in_progress")
     assert.equal(stepAvailability("laboratory", partial, false), "locked")
     assert.equal(stepAvailability("analysis", partial, false), "locked")
     assert.equal(stepAvailability("predictions", finished, false), "available")
@@ -206,12 +226,12 @@ describe("record-backed step status", () => {
     )
   })
 
-  it("completes docking only when every ligand–protein pair has an imported result", () => {
+  it("marks docking complete only when every ligand–protein pair is resolved", () => {
     assert.equal(stepRecordStatus("docking", setupRecords), "incomplete")
     assert.equal(stepRecordStatus("docking", emptyReadiness({ dockingRuns: 2 })), "incomplete")
     assert.equal(
       stepRecordStatus("docking", emptyReadiness({ compounds: 2, proteins: 2, dockingCompleted: 3 })),
-      "incomplete",
+      "in_progress",
     )
     assert.equal(
       stepRecordStatus("docking", emptyReadiness({ compounds: 2, proteins: 2, dockingCompleted: 4 })),

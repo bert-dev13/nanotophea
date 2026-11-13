@@ -11,6 +11,7 @@ import type { Protein } from "@/lib/domain/models"
 import { toUserFacingError } from "@/lib/errors/userFacing"
 import { DeferredProteinViewer } from "@/components/study/DeferredMolecularViewer"
 import { createProtein, deleteProtein, listProteins } from "@/lib/repositories/researchDataRepository"
+import { getCachedProteins, invalidateStudyCatalog } from "@/lib/workflow/studyCatalogCache"
 import { useRcsbStructure } from "@/lib/scientific/client"
 
 const FILTERS: Array<{ id: "all" | ProteinGroup; label: string }> = [
@@ -89,7 +90,7 @@ export function ProteinBrowser({
     setLoading(true)
     setError(null)
     try {
-      setRows(await listProteins(study.id))
+      setRows(await getCachedProteins(study.id, () => listProteins(study.id)))
     } catch (e) {
       setError(toUserFacingError(e, "Could not load target proteins"))
     } finally {
@@ -219,6 +220,7 @@ export function ProteinBrowser({
             )
           )
         }
+        invalidateStudyCatalog(activeStudy.id)
         triggerDebouncedChanged()
       } catch (e) {
         console.error("[ProteinBrowser] error toggling protein:", e)
@@ -269,7 +271,8 @@ export function ProteinBrowser({
       await Promise.allSettled(
         unselected.map((item) => createProtein(activeStudy.id, { id: user.uid }, catalogProteinInput(item)))
       )
-      const freshRows = await listProteins(activeStudy.id)
+      invalidateStudyCatalog(activeStudy.id)
+      const freshRows = await getCachedProteins(activeStudy.id, () => listProteins(activeStudy.id), { force: true })
       setRows(freshRows)
       triggerDebouncedChanged()
     } catch (e) {
@@ -292,7 +295,8 @@ export function ProteinBrowser({
       await Promise.allSettled(
         prevRows.map((r) => deleteProtein(activeStudy.id, r.id, { id: user.uid }))
       )
-      const freshRows = await listProteins(activeStudy.id)
+      invalidateStudyCatalog(activeStudy.id)
+      const freshRows = await getCachedProteins(activeStudy.id, () => listProteins(activeStudy.id), { force: true })
       setRows(freshRows)
       triggerDebouncedChanged()
     } catch (e) {

@@ -67,6 +67,11 @@ import {
   updateLabDataset,
 } from "@/lib/repositories/labRepository"
 import { listCellLines, listCompounds, listProteins } from "@/lib/repositories/researchDataRepository"
+import {
+  getCachedCellLines,
+  getCachedCompounds,
+  getCachedProteins,
+} from "@/lib/workflow/studyCatalogCache"
 import { listPredictionRuns } from "@/lib/repositories/scientificRunRepository"
 
 const REPS: LabReplicateCode[] = ["R1", "R2", "R3"]
@@ -274,9 +279,9 @@ export function LaboratoryWorkspace({
 
     try {
       const [compoundRows, proteinRows, lineRows, datasetRows, predictionRows, nanoparticleRes] = await Promise.all([
-        listCompounds(study.id),
-        listProteins(study.id),
-        listCellLines(study.id),
+        getCachedCompounds(study.id, () => listCompounds(study.id)),
+        getCachedProteins(study.id, () => listProteins(study.id)),
+        getCachedCellLines(study.id, () => listCellLines(study.id)),
         listLabDatasets(study.id),
         listPredictionRuns(study.id).catch(() => [] as PredictionRun[]),
         fetch(`/api/studies/${study.id}/nanoparticle`).then(async (res) => {

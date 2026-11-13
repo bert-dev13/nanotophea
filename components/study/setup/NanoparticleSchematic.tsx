@@ -1,13 +1,12 @@
 "use client"
 
 import { useState } from "react"
-import { Eye, ChevronDown, ChevronUp, Layers, Sparkles } from "lucide-react"
+import { Eye, Sparkles } from "lucide-react"
 
 type ViewMode = "overview" | "chains" | "crosslinks" | "network"
 
 export function NanoparticleSchematic() {
   const [mode, setMode] = useState<ViewMode>("overview")
-  const [showLearnMore, setShowLearnMore] = useState(false)
 
   return (
     <div className="rounded-xl border border-slate-700/60 bg-slate-900/85 p-5 shadow-sm">
@@ -316,49 +315,10 @@ export function NanoparticleSchematic() {
         </svg>
       </div>
 
-      {/* Mechanism Text (Concise Requirement 7) */}
-      <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/50 p-3.5">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h4 className="text-xs font-semibold text-slate-200 uppercase tracking-wide">
-              How it forms
-            </h4>
-            <p className="mt-1 text-xs text-slate-300 leading-relaxed max-w-3xl">
-              Under acidic conditions, chitosan amino groups become positively charged. Negatively charged TPP interacts with these sites, producing ionic crosslinks that promote nanoparticle formation.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowLearnMore(!showLearnMore)}
-            className="shrink-0 inline-flex items-center gap-1 text-xs font-medium text-emerald-400 hover:text-emerald-300 transition-colors"
-          >
-            {showLearnMore ? (
-              <>
-                Less <ChevronUp className="h-3.5 w-3.5" />
-              </>
-            ) : (
-              <>
-                Learn More <ChevronDown className="h-3.5 w-3.5" />
-              </>
-            )}
-          </button>
-        </div>
-
-        {/* Collapsible Scientific Details */}
-        {showLearnMore && (
-          <div className="mt-3 pt-3 border-t border-slate-800/80 text-xs text-slate-400 space-y-2 leading-relaxed animate-in fade-in duration-200">
-            <p>
-              <strong className="text-slate-300">Protonation & Charge Density:</strong> The primary amino groups (<code className="text-emerald-400 font-mono">–NH₂</code>) along the glucosamine units of chitosan exhibit an intrinsic <span className="font-mono">pKa ≈ 6.5</span>. In slightly acidic aqueous solutions (pH 4.5–5.5, typically solubilized with 1% acetic acid), protonation yields polycationic ammonium chains (<code className="text-emerald-400 font-mono">–NH₃⁺</code>).
-            </p>
-            <p>
-              <strong className="text-slate-300">Ionic Gelation & Phase Separation:</strong> Sodium tripolyphosphate (TPP, <span className="font-mono">Na₅P₃O₁₀</span>) completely dissociates into penta-anions (<code className="text-amber-400 font-mono">P₃O₁₀⁵⁻</code>). Dropwise addition under controlled stirring introduces multivalent counter-ions that bridge inter- and intra-molecular chitosan chains simultaneously. This electrostatic neutralization induces local hydrophobic collapse and spontaneous self-assembly into colloidal nanospheres with a hydrophilic chitosan shell.
-            </p>
-            <p>
-              <strong className="text-slate-300">Bioactive Entrapment Mechanism:</strong> When plant tea extract containing polyphenolic flavonoids (such as quercetin) is present during crosslinking, the bioactives are passively entrapped within the hydrophobic polymer interstitial spaces and stabilized against premature hydrolytic or oxidative degradation.
-            </p>
-          </div>
-        )}
-      </div>
+      <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
+        Under acidic conditions, chitosan amino groups become positively charged. Negatively charged TPP
+        interacts with these sites, producing ionic crosslinks that promote nanoparticle formation.
+      </p>
     </div>
   )
 }

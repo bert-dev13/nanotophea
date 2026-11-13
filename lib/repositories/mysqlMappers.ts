@@ -174,6 +174,7 @@ export function mapNanoparticleFormulation(row: any): NanoparticleFormulation {
     stirringDuration: row.stirring_duration ?? undefined,
     temperature: row.temperature ?? undefined,
     preparationNotes: row.preparation_notes ?? undefined,
+    preparationProtocol: parseOptionalJson(row.preparation_protocol),
 
     particleSizeNm: row.particle_size_nm != null ? Number(row.particle_size_nm) : undefined,
     pdi: row.pdi != null ? Number(row.pdi) : undefined,

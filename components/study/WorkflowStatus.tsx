@@ -58,7 +58,7 @@ export function WorkflowStatusProvider({ children }: { children: ReactNode }) {
       if (
         !options?.force &&
         lastFetchedRef.current?.studyId === requested &&
-        now - lastFetchedRef.current.time < 2500
+        now - lastFetchedRef.current.time < 5000
       ) {
         return lastFetchedRef.current.readiness
       }

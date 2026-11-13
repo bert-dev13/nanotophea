@@ -8,9 +8,6 @@ import { useStudy } from "@/components/providers/StudyProvider"
 import { EvidenceBadge } from "@/components/ui/EvidenceBadge"
 import { AdmeAssessmentPanel } from "@/components/study/AdmeAssessmentPanel"
 import { AdmeProgress, startAssessmentStages, type AssessmentStageView } from "@/components/study/AdmeProgress"
-import { PhytochemicalAnalysisViewToggle } from "@/components/study/PhytochemicalAnalysisViewToggle"
-import { TeaFormulationCombinedPanel } from "@/components/study/TeaFormulationCombinedPanel"
-import { usePhytochemicalAnalysisView } from "@/components/study/usePhytochemicalAnalysisView"
 import { admeAssessmentService, hardcodedAdmeAssessment, PROTOTYPE_ADME_PROVIDER, PROTOTYPE_ADME_UNAVAILABLE } from "@/lib/adme/assessmentService"
 import { requestAutomaticAdme } from "@/lib/adme/client"
 import { isCompletedScreeningRun, isPrototypeAdmeRun, latestProviderRun, latestScreeningRun, screenedCompoundIds } from "@/lib/adme/service"
@@ -19,6 +16,7 @@ import { DeferredCompoundViewer } from "@/components/study/DeferredMolecularView
 import type { AdmetRun, Compound } from "@/lib/domain/models"
 import { toUserFacingError } from "@/lib/errors/userFacing"
 import { listCompounds } from "@/lib/repositories/researchDataRepository"
+import { getCachedCompounds } from "@/lib/workflow/studyCatalogCache"
 import { screenLipinski } from "@/lib/insilico/lipinski"
 import { screeningComponentStatus } from "@/lib/insilico/screeningProgress"
 import { listAdmetRuns, savePrototypeAdmeRun } from "@/lib/repositories/scientificRunRepository"
@@ -140,7 +138,6 @@ export function InSilicoWorkspace({
   const studyId = activeStudy?.id ?? null
   const activeStudyRef = useRef(activeStudy)
   activeStudyRef.current = activeStudy
-  const { viewMode, setViewMode } = usePhytochemicalAnalysisView(studyId)
   const [rows, setRows] = useState<Compound[]>([])
   const [runs, setRuns] = useState<AdmetRun[]>([])
   const [admeLoadFailed, setAdmeLoadFailed] = useState(false)
@@ -175,7 +172,7 @@ export function InSilicoWorkspace({
     setError(null)
     try {
       const [compounds, admeRuns] = await Promise.all([
-        listCompounds(study.id),
+        getCachedCompounds(study.id, () => listCompounds(study.id), { force: options?.soft ? false : undefined }),
         listAdmetRuns(study.id).catch(() => []),
       ])
       if (generation !== loadGenerationRef.current) return
@@ -481,13 +478,6 @@ export function InSilicoWorkspace({
               PubChem physicochemical descriptors, Lipinski drug-likeness rules, and ADME assessments for each selected phytochemical.
             </p>
             <AskAiLink context="insilico" />
-            {!loading && rows.length > 0 ? (
-              <PhytochemicalAnalysisViewToggle
-                mode={viewMode}
-                onChange={setViewMode}
-                compoundCount={rows.length}
-              />
-            ) : null}
           </div>
         </div>
         <div className="nano-setup-progress" aria-live="polite">
@@ -768,35 +758,8 @@ export function InSilicoWorkspace({
               </div>
             </aside>
 
-            {/* RIGHT DETAIL: Individual compound or combined tea formulation */}
-            {viewMode === "combined" ? (
-              <TeaFormulationCombinedPanel
-                stageLabel="in-silico screening"
-                compounds={rows.map((row) => ({
-                  id: row.id,
-                  name: row.name,
-                  pubchemCid: row.pubchemCid,
-                  formula: row.formula,
-                  chemicalClass: row.chemicalClass,
-                  smiles: row.smiles,
-                }))}
-                resultRows={rows.map((row) => {
-                  const status = getCompoundScreeningStatus(row, runs, live)
-                  return {
-                    compoundId: row.id,
-                    context: "Lipinski · ADME screening",
-                    result: status.label,
-                    detail: status.detail,
-                    evidence: status.isDockingReady ? "Docking-ready (individual compound)" : "Individual compound status",
-                  }
-                })}
-                onInspectCompound={(compoundId) => {
-                  setViewId(compoundId)
-                  setViewMode("individual")
-                  setMobilePane("detail")
-                }}
-              />
-            ) : viewing ? (
+            {/* RIGHT DETAIL: Individual compound */}
+            {viewing ? (
               <CompoundScreen
                 key={viewing.id}
                 compound={viewing}

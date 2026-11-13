@@ -30,6 +30,11 @@ import { listLabDatasets, listLabReplicates } from "@/lib/repositories/labReposi
 import { createComparison } from "@/lib/repositories/comparisonRepository"
 import { createInterpretation, listInterpretations, updateInterpretation } from "@/lib/repositories/interpretationRepository"
 import { listCompounds, listCellLines, listProteins, listReferences } from "@/lib/repositories/researchDataRepository"
+import {
+  getCachedCellLines,
+  getCachedCompounds,
+  getCachedProteins,
+} from "@/lib/workflow/studyCatalogCache"
 import { listDockingRuns, listAdmetRuns, listPredictionRuns } from "@/lib/repositories/scientificRunRepository"
 import { createStatisticsAnalysis, listStatisticsAnalyses, recalculateStatisticsAnalysis } from "@/lib/repositories/statisticsRepository"
 import {
@@ -561,9 +566,9 @@ export function AnalysisInterpretation({
           listPredictionRuns(study.id),
           listInterpretations(study.id),
           listDockingRuns(study.id),
-          listCompounds(study.id),
-          listProteins(study.id),
-          listCellLines(study.id),
+          getCachedCompounds(study.id, () => listCompounds(study.id)),
+          getCachedProteins(study.id, () => listProteins(study.id)),
+          getCachedCellLines(study.id, () => listCellLines(study.id)),
           listReferences(study.id),
           listAdmetRuns(study.id),
         ])

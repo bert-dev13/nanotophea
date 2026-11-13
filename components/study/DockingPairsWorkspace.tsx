@@ -47,6 +47,7 @@ const DockedPoseViewer = dynamic(
 
 import { DeferredProteinViewer } from "@/components/study/DeferredMolecularViewer"
 import { listCompounds, listProteins } from "@/lib/repositories/researchDataRepository"
+import { getCachedCompounds, getCachedProteins } from "@/lib/workflow/studyCatalogCache"
 import { getDockingRun, listAdmetRuns, listDockingOutcomes, reopenDockingPair, skipDockingPair } from "@/lib/repositories/scientificRunRepository"
 import { screenedCompoundIds } from "@/lib/adme/service"
 import { DOCKING_FAILED, DOCKING_SERVICE_UNAVAILABLE, researcherDockingError } from "@/services/docking/types"
@@ -91,6 +92,8 @@ export interface DockingPairsWorkspaceProps {
   checking?: boolean
   missing?: string[]
   checkError?: string | null
+  /** Non-blocking notice when docking pairs remain unresolved. */
+  advisory?: string | null
 }
 
 export function DockingPairsWorkspace({
@@ -101,6 +104,7 @@ export function DockingPairsWorkspace({
   checking = false,
   missing = [],
   checkError = null,
+  advisory = null,
 }: DockingPairsWorkspaceProps) {
   const handleBack = onBackAction ?? (() => {})
   const handleContinue = onContinueAction ?? (() => {})
@@ -147,8 +151,8 @@ export function DockingPairsWorkspace({
     if (!options?.soft) setLoading(true)
     try {
       const [compoundRows, proteinRows, outcomes, admetRuns] = await Promise.all([
-        listCompounds(study.id),
-        listProteins(study.id),
+        getCachedCompounds(study.id, () => listCompounds(study.id)),
+        getCachedProteins(study.id, () => listProteins(study.id)),
         listDockingOutcomes(study.id).catch((err) => {
           console.warn("[Docking] listDockingOutcomes catch:", err)
           return {
@@ -234,11 +238,17 @@ export function DockingPairsWorkspace({
   const activeJob = jobs.some((job) => job.status === "waiting" || job.status === "preparing" || job.status === "running")
   useEffect(() => {
     if (!activeJob) return
+    let ticks = 0
+    // Jobs-only poll frequently; full soft reload less often to cut server/DB load.
     const timer = setInterval(() => {
-      void refreshJobs()
-        .then(() => load({ soft: true }))
-        .then(() => notifyChanged.current())
-    }, 2000)
+      ticks += 1
+      void refreshJobs().then(() => {
+        if (ticks % 2 === 0) {
+          return load({ soft: true }).then(() => notifyChanged.current())
+        }
+        return undefined
+      })
+    }, 4000)
     return () => clearInterval(timer)
   }, [activeJob, load, refreshJobs])
 
@@ -851,6 +861,11 @@ export function DockingPairsWorkspace({
       {missing[0] ? (
         <p className="nano-setup-note" role="status">
           {missing[0]}
+        </p>
+      ) : null}
+      {!missing[0] && advisory ? (
+        <p className="nano-setup-note" role="status">
+          {advisory}
         </p>
       ) : null}
 

@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import {
   AlertCircle,
   ArrowLeft,
@@ -25,10 +26,8 @@ import { AskAiLink } from "@/components/ai/ask-ai-link"
 import { assistantFocusId } from "@/lib/ai/focus"
 import { useStudy } from "@/components/providers/StudyProvider"
 import { EvidenceBadge } from "@/components/ui/EvidenceBadge"
-import {
-  PredictionEvidenceClassification,
-  predictionEvidenceBadgeType,
-} from "@/components/study/PredictionEvidenceClassification"
+import { predictionEvidenceBadgeType } from "@/components/study/PredictionEvidenceClassification"
+import { DeferredCompoundViewer } from "@/components/study/DeferredMolecularViewer"
 import type {
   AdmetRun,
   CellLineRecord,
@@ -72,6 +71,11 @@ import { storedSimulationFromPrototype } from "@/lib/predictions/store"
 import type { PredictionFeatures, PredictionSeriesPoint } from "@/lib/predictions/types"
 import { publicationLabel, type PubMedPaper } from "@/lib/scientific/pubmed"
 import { listCellLines, listCompounds, listProteins } from "@/lib/repositories/researchDataRepository"
+import {
+  getCachedCellLines,
+  getCachedCompounds,
+  getCachedProteins,
+} from "@/lib/workflow/studyCatalogCache"
 import { createPredictionRun, listAdmetRuns, listDockingOutcomes, listPredictionRuns, updatePredictionRun } from "@/lib/repositories/scientificRunRepository"
 import { RosOxidativeTargetPicker } from "@/components/study/RosOxidativeTargetPicker"
 import { readStudyUiPrefs, writeStudyUiPrefs } from "@/lib/workflow/studyUiPrefs"
@@ -398,9 +402,9 @@ export function BiologicalPredictionsWorkspace({
     setError(null)
     try {
       const [compoundRows, proteinRows, lineRows, predictionRows, dockingRows, admetRows] = await Promise.all([
-        listCompounds(study.id),
-        listProteins(study.id),
-        listCellLines(study.id),
+        getCachedCompounds(study.id, () => listCompounds(study.id)),
+        getCachedProteins(study.id, () => listProteins(study.id)),
+        getCachedCellLines(study.id, () => listCellLines(study.id)),
         listPredictionRuns(study.id).catch(() => [] as PredictionRun[]),
         listDockingOutcomes(study.id).catch(() => ({ completed: [] as DockingRun[], skipped: [] as SkippedDockingPair[] })),
         listAdmetRuns(study.id).catch(() => [] as AdmetRun[]),
@@ -1062,77 +1066,77 @@ export function BiologicalPredictionsWorkspace({
         </p>
       ) : null}
 
-      {pendingConfirmJobs ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="exploratory-sim-title"
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 80,
-            background: "rgba(15, 23, 42, 0.55)",
-            display: "grid",
-            placeItems: "center",
-            padding: "1rem",
-          }}
-        >
-          <div
-            style={{
-              width: "min(520px, 100%)",
-              background: "var(--card, #fff)",
-              color: "var(--card-foreground, #0f172a)",
-              borderRadius: "12px",
-              border: "1px solid var(--border, #e2e8f0)",
-              padding: "1.1rem 1.2rem",
-              boxShadow: "0 20px 50px rgba(15, 23, 42, 0.25)",
-            }}
-          >
-            <p
-              id="exploratory-sim-title"
-              style={{ margin: 0, fontSize: "11px", letterSpacing: "0.08em", textTransform: "uppercase", color: "#c2410c", fontWeight: 700 }}
+      {pendingConfirmJobs
+        ? createPortal(
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="exploratory-sim-title"
+              className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
             >
-              Exploratory simulation — not a validated prediction
-            </p>
-            <h3 style={{ margin: "0.45rem 0 0.55rem", fontSize: "1.05rem" }}>
-              Run {pendingConfirmJobs.length === 1 ? "this" : `${pendingConfirmJobs.length}`} exploratory simulation
-              {pendingConfirmJobs.length === 1 ? "" : "s"}?
-            </h3>
-            <p style={{ margin: 0, fontSize: "13px", lineHeight: 1.5, color: "#475569" }}>
-              No validated computational model is registered for these endpoints. Results will be stored as{" "}
-              <strong>SIMULATION</strong> from identity-based demonstration curves. They are not experimental
-              measurements, not Trolox TEAC, not fitted IC50 values, not absorbance/OD, and not flow-cytometry
-              populations. Hippo–YAP may use docking only as a labeled pathway proxy.
-            </p>
-            <ul style={{ margin: "0.75rem 0 0", paddingLeft: "1.1rem", fontSize: "12px", color: "#64748b" }}>
-              {pendingConfirmJobs.slice(0, 6).map((job) => (
-                <li key={job.key}>{predictionJobLabel(job.endpoint, job.subject)}</li>
-              ))}
-              {pendingConfirmJobs.length > 6 ? <li>…and {pendingConfirmJobs.length - 6} more</li> : null}
-            </ul>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", marginTop: "1rem" }}>
-              <button
-                type="button"
-                className="phyto-back"
+              <div
+                className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm"
                 onClick={() => setPendingConfirmJobs(null)}
+                aria-hidden="true"
+              />
+              <div
+                className="relative z-10 w-[calc(100%-24px)] sm:w-full max-w-lg rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-2xl"
+                style={{ color: "#0f172a" }}
+                onClick={(event) => event.stopPropagation()}
               >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="phyto-continue"
-                onClick={() => {
-                  const jobs = pendingConfirmJobs
-                  setPendingConfirmJobs(null)
-                  void runJobs(jobs)
-                }}
-              >
-                I understand — run exploratory simulation
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+                <p
+                  id="exploratory-sim-title"
+                  style={{
+                    margin: 0,
+                    fontSize: "11px",
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    color: "#c2410c",
+                    fontWeight: 700,
+                  }}
+                >
+                  Exploratory simulation — not a validated prediction
+                </p>
+                <h3 style={{ margin: "0.45rem 0 0.55rem", fontSize: "1.05rem" }}>
+                  Run {pendingConfirmJobs.length === 1 ? "this" : `${pendingConfirmJobs.length}`} exploratory
+                  simulation
+                  {pendingConfirmJobs.length === 1 ? "" : "s"}?
+                </h3>
+                <p style={{ margin: 0, fontSize: "13px", lineHeight: 1.5, color: "#475569" }}>
+                  No validated computational model is registered for these endpoints. Results will be stored as{" "}
+                  <strong>SIMULATION</strong> from identity-based demonstration curves. They are not experimental
+                  measurements, not Trolox TEAC, not fitted IC50 values, not absorbance/OD, and not flow-cytometry
+                  populations. Hippo–YAP may use docking only as a labeled pathway proxy.
+                </p>
+                <ul style={{ margin: "0.75rem 0 0", paddingLeft: "1.1rem", fontSize: "12px", color: "#64748b" }}>
+                  {pendingConfirmJobs.slice(0, 6).map((job) => (
+                    <li key={job.key}>{predictionJobLabel(job.endpoint, job.subject)}</li>
+                  ))}
+                  {pendingConfirmJobs.length > 6 ? (
+                    <li>…and {pendingConfirmJobs.length - 6} more</li>
+                  ) : null}
+                </ul>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", marginTop: "1rem" }}>
+                  <button type="button" className="phyto-back" onClick={() => setPendingConfirmJobs(null)}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="phyto-continue"
+                    onClick={() => {
+                      const jobs = pendingConfirmJobs
+                      setPendingConfirmJobs(null)
+                      void runJobs(jobs)
+                    }}
+                  >
+                    I understand — run exploratory simulation
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }
@@ -1267,8 +1271,6 @@ function SubjectPrediction({
           </button>
         </div>
       </header>
-
-      <PredictionEvidenceClassification endpoint={endpoint} run={run} />
 
       {isHippoYap ? (
         <div
@@ -1505,6 +1507,26 @@ function SubjectPrediction({
           <strong>{primaryMetric ?? "Pending"}</strong>
         </li>
       </ul>
+
+      {compound?.pubchemCid != null ? (
+        <section className="phyto-block" style={{ marginTop: "1rem" }}>
+          <h3>Molecular Structure</h3>
+          <p className="phyto-caption">
+            Auto-loads when visible for CID {compound.pubchemCid}. 2D depiction first; 3D when a PubChem conformer exists.
+          </p>
+          <DeferredCompoundViewer
+            key={compound.pubchemCid}
+            cid={compound.pubchemCid}
+            name={compound.name || subject.compoundName}
+            height={280}
+            quiet
+          />
+        </section>
+      ) : compound ? (
+        <p className="phyto-missing" style={{ marginTop: "0.85rem" }}>
+          Molecular structure unavailable — no PubChem CID for {compound.name || subject.compoundName}.
+        </p>
+      ) : null}
 
       {/* Live Simulation Progress (if running) matching adme-progress */}
       {running ? (

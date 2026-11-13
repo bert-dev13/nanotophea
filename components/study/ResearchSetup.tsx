@@ -344,6 +344,7 @@ export function ResearchSetup({
             checking={checking || navBusy}
             continueDisabled={continueDisabled}
             onTabAction={handleTab}
+            onSkipAction={() => void continueToInSilico({ markSkipped: true })}
             onContinueAction={() =>
               void continueToInSilico(
                 (readiness?.formulations ?? 0) > 0 || nanoparticleStatus === "configured"
@@ -351,15 +352,12 @@ export function ResearchSetup({
                   : { markSkipped: true },
               )
             }
-            continueLabel={
-              (readiness?.formulations ?? 0) > 0 || nanoparticleStatus === "configured"
-                ? "Continue to In-Silico"
-                : "Skip nanoparticle · Continue to In-Silico"
-            }
+            skipLabel="Skip Nanoparticle Formulation"
+            continueLabel="Continue to In-Silico"
             statusNote={
               (readiness?.formulations ?? 0) > 0 || nanoparticleStatus === "configured"
-                ? "Nanoparticle formulation is recorded. Selected phytochemicals, proteins, and cell lines are preserved."
-                : "Nanoparticle formulation is optional. Skipping records that choice and continues to In-Silico without blocking the workflow."
+                ? "Nanoparticle formulation is recorded and preserved when you continue. Selected phytochemicals, proteins, and cell lines remain available."
+                : "Nanoparticle formulation is optional. Skip or continue — neither blocks In-Silico. Existing records are preserved if you navigate away."
             }
             showStatus
             isBottom
@@ -379,7 +377,9 @@ function SetupActions({
   checking,
   continueDisabled,
   onTabAction,
+  onSkipAction,
   onContinueAction,
+  skipLabel,
   continueLabel = "Continue to In-Silico",
   statusNote,
   showStatus = false,
@@ -393,7 +393,9 @@ function SetupActions({
   checking: boolean
   continueDisabled: boolean
   onTabAction?: (tab: string) => void
+  onSkipAction?: () => void
   onContinueAction?: () => void
+  skipLabel?: string
   continueLabel?: string
   statusNote?: string
   showStatus?: boolean
@@ -449,6 +451,11 @@ function SetupActions({
           <button type="button" className="nano-setup-next" onClick={() => onTabAction?.(next.id)}>
             Next step
             <ArrowRight size={15} aria-hidden />
+          </button>
+        ) : null}
+        {onSkipAction && skipLabel ? (
+          <button type="button" className="nano-setup-back" disabled={continueDisabled} onClick={onSkipAction}>
+            {checking ? "Checking…" : skipLabel}
           </button>
         ) : null}
         <button type="button" className="nano-setup-continue" disabled={continueDisabled} onClick={onContinueAction}>

@@ -9,6 +9,7 @@ import type { CellLineRecord, LabDataset } from "@/lib/domain/models"
 import { toUserFacingError } from "@/lib/errors/userFacing"
 import { listLabDatasets } from "@/lib/repositories/labRepository"
 import { createCellLine, deleteCellLine, listCellLines } from "@/lib/repositories/researchDataRepository"
+import { getCachedCellLines, invalidateStudyCatalog } from "@/lib/workflow/studyCatalogCache"
 
 const FILTERS: Array<{ id: "all" | "cancer" | "normal"; label: string }> = [
   { id: "all", label: "All" },
@@ -84,7 +85,7 @@ export function CellLineBrowser({
     setError(null)
     try {
       const [lines, labs] = await Promise.all([
-        listCellLines(study.id),
+        getCachedCellLines(study.id, () => listCellLines(study.id)),
         listLabDatasets(study.id).catch(() => [] as LabDataset[]),
       ])
       setRows(lines)
@@ -188,6 +189,7 @@ export function CellLineBrowser({
             prev.map((r) => (r.name.toLowerCase() === item.name.toLowerCase() ? created : r))
           )
         }
+        invalidateStudyCatalog(activeStudy.id)
         await updateActiveStudy({ primaryCellLine: item.name })
         triggerDebouncedChanged()
       } catch (e) {
@@ -253,7 +255,8 @@ export function CellLineBrowser({
           }),
         ),
       )
-      const fresh = await listCellLines(activeStudy.id)
+      invalidateStudyCatalog(activeStudy.id)
+      const fresh = await getCachedCellLines(activeStudy.id, () => listCellLines(activeStudy.id), { force: true })
       setRows(fresh)
       if (fresh[0]) await updateActiveStudy({ primaryCellLine: fresh[0].name })
       triggerDebouncedChanged()
@@ -273,7 +276,8 @@ export function CellLineBrowser({
     setRows([])
     try {
       await Promise.allSettled(prevRows.map((row) => deleteCellLine(activeStudy.id, row.id, { id: user.uid })))
-      setRows(await listCellLines(activeStudy.id))
+      invalidateStudyCatalog(activeStudy.id)
+      setRows(await getCachedCellLines(activeStudy.id, () => listCellLines(activeStudy.id), { force: true }))
       triggerDebouncedChanged()
     } catch (e) {
       setRows(prevRows)

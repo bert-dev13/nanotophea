@@ -261,6 +261,12 @@ export const NanoparticleFormulationSchema = ScientificRecordBaseSchema.extend({
   temperature: z.string().nullish(),
   preparationNotes: z.string().nullish(),
 
+  /**
+   * Optional Chitosan–TPP preparation documentation (Steps 8–11 + ingredients).
+   * Stored as JSON; does not invent size/EE/loading or alter assay math.
+   */
+  preparationProtocol: z.record(z.string(), z.unknown()).nullish(),
+
   // Nanoparticle characterization (Experimental measurements)
   particleSizeNm: z.number().nullish(),
   pdi: z.number().nullish(),
